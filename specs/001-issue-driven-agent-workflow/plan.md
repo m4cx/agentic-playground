@@ -29,8 +29,10 @@ main line can only change through a reviewed pull request.
 instructions.
 
 **Primary Dependencies**: `@earendil-works/pi-coding-agent` pinned to the exact version used locally
-(1.4.0), consumed through its documented RPC wire protocol. No other runtime dependencies: GitHub
-access uses the Node built-in `fetch`, tests use `node:test`.
+(1.4.0), consumed through its documented RPC wire protocol. The repository's own Spec Kit prompt
+templates are loaded as Pi prompt templates from an explicit allowlist, so a feature-sized issue can
+be worked with this repository's `specify` → `plan` → `tasks` workflow. No other runtime
+dependencies: GitHub access uses the Node built-in `fetch`, tests use `node:test`.
 
 **Storage**: No database. Authoritative state lives in the repository: issue labels carry the run
 state, issue comments carry the audit record and agent feedback, pull requests carry proposed
@@ -78,6 +80,11 @@ to everything they write).
 
 No violations; **Complexity Tracking is empty**.
 
+Language note for the Spec Kit capability (D13): the agent may run `/speckit.*` commands whose
+artifacts are committed under `specs/**`. Those artifacts are generated content and therefore must be
+English, even when the issue thread that requested them is not. `.agent/instructions.md` states this
+explicitly, and `quickstart.md` S11 and S12 verify it.
+
 ## Project Structure
 
 ### Documentation (this feature)
@@ -109,7 +116,8 @@ specs/001-issue-driven-agent-workflow/
 
 .agent/
 ├── instructions.md          # Standing instructions appended to Pi's system prompt
-├── config.yml               # Model, consumption limits, timeouts, label names, concurrency cap
+├── config.yml               # Model, consumption limits, timeouts, label names, concurrency cap,
+│                            # and the prompt-template allowlist
 └── README.md                # How a maintainer changes agent behaviour
 
 src/agent/
@@ -162,15 +170,21 @@ Full rationale and rejected alternatives are in [research.md](./research.md).
 1. **Runtime**: Pi in RPC mode, driven from Node over its documented JSONL protocol.
 2. **Credential separation**: the orchestrator holds the repository token; Pi holds only the model
    provider key and filesystem tools. No repository authority inside the agent process.
-3. **Configuration surface**: Pi runs with trust-gated project resources disabled and an explicit
-   instruction file and tool allowlist, so behaviour does not depend on whatever `.pi/` content a
-   branch happens to contain.
-4. **State**: labels for state, comments for record, pull requests for proposals; platform
+3. **Configuration surface**: Pi runs with trust-gated project resources disabled, auto-discovery of
+extensions, skills, prompt templates, and MCP servers off, and an explicit instruction file and tool
+allowlist, so behaviour does not depend on whatever `.pi/` content a branch happens to contain.
+4. **Prompt vocabulary from an allowlist**: named prompt templates — by default this repository's
+   `.pi/prompts/speckit.*.md` — are loaded explicitly via `--prompt-template`, giving the agent the
+   same `/speckit.*` commands used locally while keeping discovery off (research D13). Spec Kit
+   performs no git operations here, so it cannot interfere with the orchestrator's branch ownership.
+5. **State**: labels for state, comments for record, pull requests for proposals; platform
    concurrency groups for per-issue serialization.
-5. **Budget**: measured from Pi's own session statistics each turn, with a soft threshold and a hard
+6. **Budget**: measured from Pi's own session statistics each turn, with a soft threshold and a hard
    stop that requires an explicit command to continue.
-6. **No automatic retry**: Pi's own transient-error retry is disabled to keep the spec's rule
+7. **No automatic retry**: Pi's own transient-error retry is disabled to keep the spec's rule
    literally true and consumption predictable.
+8. **Credential hygiene in the workspace**: the checkout persists no credentials and the workspace git
+   config holds no token, so the agent's shell has nothing to push with (research D10, layer c).
 
 ## Complexity Tracking
 

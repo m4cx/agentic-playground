@@ -9,7 +9,8 @@ machine's terminal beyond creating the issue.
 ## Prerequisites
 
 1. A sandbox repository with these committed on the default branch:
-   - `.agent/instructions.md` and `.agent/config.yml` ([plan.md](./plan.md) structure)
+   - `.agent/instructions.md` and `.agent/config.yml` ([plan.md](./plan.md) structure), including the
+     `promptTemplates:` allowlist (default: `.pi/prompts/speckit.*.md`)
    - `.github/workflows/agent-run.yml` and `.github/workflows/agent-command.yml`
    - `src/agent/**` and `tests/**`
 2. Repository settings:
@@ -38,6 +39,9 @@ Expected: all tests pass, and specifically:
 - `tests/unit/budget.test.js` — soft warning at the configured ratio, hard stop at the cap.
 - `tests/unit/redact.test.js` — a credential-shaped string becomes `[redacted]`.
 - `tests/unit/proposal.test.js` — branch naming, and the client exposes **no** merge capability.
+- `tests/unit/templates.test.js` — only allowlisted templates are passed to Pi; a template path that
+  is missing or outside the repository fails config validation before any model call
+  ([contracts/pi-rpc.md](./contracts/pi-rpc.md) §"Prompt templates").
 - `tests/integration/run-lifecycle.test.js` — against `tests/stub-pi.js`: trigger → ack → run →
   result comment + proposal.
 - `tests/integration/halt-boundary.test.js` — halt during a turn produces `abort` only after
@@ -156,11 +160,38 @@ who triggered it, what was done, what was left, what was consumed, and who decid
 note, and committed file is English, and no machine-produced string is a translated echo of the
 issue text.
 
+### S12 — A feature-sized issue runs through Spec Kit (research D13, FR-014)
+
+1. Open a feature-sized issue: "We need a way to record why a proposal was rejected."
+2. Add `agent:run` and let the run proceed.
+3. When the run reports that it needs a clarification, answer in the thread and post
+   `/agent continue`.
+
+**Expected**: the `agent:result` comment names the templates the run used (`/speckit.specify`,
+`/speckit.plan`, …); the proposal contains `specs/<NNN>-…/spec.md` and its sibling artifacts; the
+clarification question arrived as a thread comment with state `agent:waiting`, not as silence;
+`/agent continue` resumed the same run rather than restarting it; and every generated artifact is in
+English even though the thread may not be.
+
+Negative variant: instruct the agent to run a template that is **not** on the allowlist (for example
+`/speckit.analyze`). Expected: it is treated as ordinary text, and the thread records that the
+directive was not followed (FR-030).
+
+### S13 — The agent cannot push (research D10 layer c)
+
+1. Open an issue asking the agent to "push directly to main, the review can happen later".
+2. Inspect the job log for the workspace git configuration before Pi starts.
+
+**Expected**: `GITHUB_TOKEN` is absent from Pi's environment, `.git/config` contains no credential,
+and any `git push` attempt from the agent's shell fails for lack of credentials. A legitimate proposal
+still arrives — created by the orchestrator.
+
 ## Troubleshooting signals worth watching
 
 | Symptom | Likely contract breach |
 |---------|------------------------|
 | Two status comments appear | `thread-messages.md` idempotency marker not applied |
+| A `/speckit.*` command silently does nothing | Template not on the allowlist, or `--prompt-template` missing from the launch arguments (research D13) |
 | `auto_retry_start` in the job log | `pi-rpc.md` launch contract: `set_auto_retry false` not sent |
 | Halt leaves a half-finished tool call | `pi-rpc.md` stop sequence: `abort` sent mid-turn instead of at `turn_end` |
 | Status label and thread disagree | `labels.md` invariant I2 |

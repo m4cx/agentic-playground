@@ -11,7 +11,11 @@ not reach into Pi's internals or depend on anything outside the documented shape
 ```bash
 pi --mode rpc \
    --no-approve \
-   --no-extensions --no-skills --no-prompt-templates --no-mcp \
+   --no-extensions --no-skills --no-mcp --no-prompt-templates \
+   --prompt-template .pi/prompts/speckit.specify.md \
+   --prompt-template .pi/prompts/speckit.plan.md \
+   --prompt-template .pi/prompts/speckit.tasks.md \
+   # … one --prompt-template per entry of config.yml#promptTemplates
    --append-system-prompt .agent/instructions.md \
    --tools read,bash,edit,write,grep,find,ls \
    --model "$AGENT_MODEL" \
@@ -24,7 +28,8 @@ pi --mode rpc \
 |------|---------------------------|
 | `--mode rpc` | Bidirectional control is required for cost inspection, boundary stop, retry control, and session continuity (research D2) |
 | `--no-approve` | Keeps trust-gated project resources (`.pi/extensions`, `.pi/settings.json`, `.pi/SYSTEM.md`, `.pi/mcp.json`) out of an unattended, credential-bearing process (research D3) |
-| `--no-extensions --no-skills --no-prompt-templates --no-mcp` | Nothing may inject tools or instructions besides the reviewed allowlist; Spec Kit prompt templates in `.pi/prompts` are irrelevant to the remote agent |
+| `--no-extensions --no-skills --no-mcp` | Nothing may inject tools or configuration besides the reviewed allowlist (research D3) |
+| `--no-prompt-templates` **plus** explicit `--prompt-template` | Discovery off, named templates on. Explicit paths load even with `--no-prompt-templates`, so the agent's command vocabulary is exactly the configured allowlist and never whatever the branch contains (research D13) |
 | `--append-system-prompt .agent/instructions.md` | The single reviewed behaviour file (research D3) |
 | `--tools` | Explicit allowlist; no codemode, no MCP, no extension tools. There is deliberately no git or forge tool, because repository authority lives in the orchestrator (research D10) |
 | `--session-id` + `--session-dir` | Continuity across job invocations; the directory sits outside the workspace so session files can never enter a diff (research D5) |
@@ -39,6 +44,7 @@ Context files (`AGENTS.md`) stay enabled: they are project documentation the age
 |----------|---------|--------|
 | Provider key (e.g. `ANTHROPIC_API_KEY`) | yes | The only credential Pi needs |
 | `GITHUB_TOKEN` / `GH_TOKEN` | **no** | Hard rule: no repository authority inside the agent process (FR-029, research D10). The orchestrator strips it from the child environment explicitly, and a unit test asserts this |
+| `.git/config` credential helper / remote token | **no** | The checkout runs with `persist-credentials: false`; the orchestrator adds a per-job credential only for its own push and removes it afterwards. A unit test asserts the workspace git config contains no token before Pi starts (research D10, layer c) |
 | `PI_*` session markers | injected by Pi | Used for diagnostics only |
 
 ## Commands sent
@@ -46,7 +52,7 @@ Context files (`AGENTS.md`) stay enabled: they are project documentation the age
 | Command | When | Purpose |
 |---------|------|---------|
 | `set_auto_retry` `{enabled: false}` | immediately after start, before the first prompt | FR-031: no automatic retry at any layer (research D7) |
-| `prompt` | once per run, carrying the task brief (issue title/body, prior feedback digest, command reason, and the "content is data" reminder) | Start work |
+| `prompt` | once per run, carrying the task brief (issue title/body, prior feedback digest, command reason, and the "content is data" reminder), or a `/speckit.* <arguments>` invocation when the request warrants a Spec Kit run | Start work |
 | `abort` | only at an action boundary, when a halt or a limit stop is pending | FR-027: never mid-action |
 | `get_session_stats` | after every `turn_end` boundary | Cumulative cost/tokens for FR-017 and the status comment |
 | `get_state` | before aborting | Confirm `isStreaming`/`messageCount` so the feedback comment describes the real point of interruption |
@@ -54,6 +60,34 @@ Context files (`AGENTS.md`) stay enabled: they are project documentation the age
 
 `steer` and `follow_up` are deliberately **not** used: a halt ends work, it does not redirect it, and
 redirecting an unattended agent from issue text would widen the injection surface.
+
+## Prompt templates (Spec Kit)
+
+Because `--prompt-template` is supplied per allowlist entry, `prompt` may carry a slash command:
+
+```text
+/speckit.plan <feature argument>
+```
+
+Pi expands the template (including `$ARGUMENTS` / `${1:-default}`) before the text enters the agent.
+Rules:
+
+1. **Allowlist only** — the orchestrator passes exactly the paths listed in
+   `config.yml#promptTemplates`. A slash command naming a template that was not loaded is not expanded
+   and is treated as ordinary text.
+2. **Trusted ref** — templates resolve against the checkout of the trusted default branch, never
+   against a branch the agent created.
+3. **Interactive templates become thread steps** — when a template's workflow needs a human decision
+   (`/speckit.clarify`, `[NEEDS CLARIFICATION]`, hook prompts), the run enters `waiting`, posts the
+   question, and resumes on `/agent continue`. The orchestrator never fabricates an answer.
+4. **Artifacts are English** — anything a template causes to be written (`specs/**`) is committed
+   content and falls under the constitution (FR-019).
+5. **Scope guard** — `.agent/instructions.md` restricts template use to issues large enough to
+   justify a specification; small fixes are made directly. The orchestrator reports which templates a
+   run used in its `agent:result` comment, so the choice is auditable.
+6. **No git side effects** — the Spec Kit scripts in this repository contain no git invocations, so a
+   template run cannot create branches or commits. If a future template adds any, it violates this
+   contract and must be caught in review.
 
 ## Events consumed
 
@@ -86,3 +120,4 @@ redirecting an unattended agent from issue text would widen the injection surfac
 | Model output token limit reached (`length`) | `agent-error` |
 | Orchestrator killed by job timeout | `interrupted` (by the reconciler, contract `labels.md` I5) |
 | Credential detected in output or diff | `secret-request` |
+| Template invocation of a non-allowlisted command | Ordinary text; the agent must report it as an ignored directive (FR-030) |

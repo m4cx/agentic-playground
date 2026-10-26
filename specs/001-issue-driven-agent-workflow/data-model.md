@@ -113,6 +113,7 @@ Repository-stored behaviour configuration.
 | `configPath` | path | `.agent/config.yml` | Schema-validated; invalid config fails the run before any model call |
 | `version` | commit SHA + content hash | Git | Applied to new runs only (FR-014) |
 | `limits` | `{maxCostUsd, warnAtRatio, continueIncrementUsd, maxTurns, maxWallClockMinutes}` | Config | All positive; warn ratio in (0, 1) |
+| `promptTemplates` | list of paths | Config | Each path must exist on the trusted ref, be a `.md` file under the repository, and be loaded explicitly with `--prompt-template`. Empty list is valid: the agent then has no slash commands at all (research D13) |
 
 ### 9. Audit Entry
 

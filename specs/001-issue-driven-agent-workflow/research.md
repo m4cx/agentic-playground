@@ -64,17 +64,19 @@ for halts, because steering inserts an instruction rather than ending the run.
 
 ## D3 — What Pi may load as configuration
 
-**Decision**: Run Pi with project-trust-gated resources **disabled**, an explicit instruction file
-(`--append-system-prompt .agent/instructions.md`), and an explicit tool allowlist
-(`--tools read,bash,edit,write,grep,find,ls`).
+**Decision**: Run Pi with project-trust-gated resources **disabled** (no auto-discovery of
+extensions, skills, prompt templates, or MCP servers), an explicit instruction file
+(`--append-system-prompt .agent/instructions.md`), an explicit tool allowlist
+(`--tools read,bash,edit,write,grep,find,ls`), and — see D13 — prompt templates only from an
+explicitly named allowlist.
 
 **Rationale**: Pi's own documentation warns that project trust controls *which resources load*, not
 what they may do: `.pi/extensions`, `.pi/settings.json`, `.pi/mcp.json`, and `.pi/SYSTEM.md` are
-executable configuration. This repository already contains `.pi/prompts` (Spec Kit templates that are
-irrelevant to the remote agent) and will grow. Loading them would mean that anything merged into
-`.pi/` later silently changes what the unattended agent does — and the agent runs with a model
-provider key. Keeping the runner's configuration explicit and outside the trust-gated set makes
-behaviour a function of one reviewed Markdown file plus one argument list.
+executable configuration. This repository already contains `.pi/prompts` and will grow. Auto-discovery
+would mean that anything merged into `.pi/` later silently changes what the unattended agent does —
+and the agent runs with a model provider key. Keeping the runner's configuration explicit makes
+behaviour a function of one reviewed Markdown file plus one argument list, whatever a branch happens
+to contain.
 
 **Alternatives considered**:
 - *`.pi/APPEND_SYSTEM.md` plus `--approve`*: the idiomatic Pi-native layout and tempting for
@@ -85,6 +87,13 @@ behaviour a function of one reviewed Markdown file plus one argument list.
 - *Relying on `AGENTS.md`*: useful and kept as ordinary context, but it is a repository-development
   document; the remote agent needs instructions that speak about issue-driven operation (thread
   etiquette, command handling, English artifact rule).
+
+**Revision after a direct question about `.pi/prompts`**: refusing *auto-discovery* of prompt
+templates is not the same as refusing the templates themselves. Templates are text, not executable
+configuration — the argument that rules out `.pi/extensions` does not apply to them — and the
+repository's Spec Kit templates are exactly the kind of reusable workflow a remote agent should be
+able to follow. D13 records the narrower rule that follows: named templates load, discovered ones
+never do.
 
 ---
 
@@ -216,15 +225,22 @@ recorded responses. `@octokit/rest` remains the obvious replacement if the endpo
 
 ## D10 — Secret handling
 
-**Decision**: Two layers. (a) Pi's environment contains the model provider key and nothing else;
+**Decision**: Three layers. (a) Pi's environment contains the model provider key and nothing else;
 Pi's tools cannot reach repository credentials because those live in the orchestrator. (b) Everything
 the orchestrator posts or commits passes through a redaction step that rejects values matching known
-credential shapes and known job secrets.
+credential shapes and known job secrets. (c) The checkout is made with `persist-credentials: false`, so
+no repository token is written into `.git/config` where the agent's `bash` tool could read it.
 
 **Rationale**: FR-018 and SC-010 need "no secret appears in thread or committed content". Layer (a)
 removes the opportunity; layer (b) catches the accident (a maintainer pastes a token into an issue and
 the agent thoughtfully repeats it in a summary). Redaction runs on the way out, not on the way in, so
 it cannot silently alter the agent's understanding of the request.
+
+Layer (c) closes a gap that (a) alone leaves open: Pi has a `bash` tool, and the default checkout
+configures the git remote with the workflow token embedded. "The orchestrator owns git" is only true if
+the agent's shell finds no credential to use. The orchestrator therefore pushes with a short-lived,
+per-job credential it adds at push time and removes afterwards, and a unit test asserts the workspace
+git config contains no token before Pi starts.
 
 **Alternatives considered**:
 - *Redaction only*: a denylist against an adversarial model is not a boundary.
@@ -262,6 +278,60 @@ review expectation wants for behaviour-affecting changes.
 
 **Alternatives considered**: floating minor/patch ranges (rejected: silent behaviour drift); model
 alias instead of an exact ID (rejected: aliases move).
+
+---
+
+## D13 — Spec Kit prompt templates as an agent capability
+
+**Decision**: Load prompt templates only from an **explicit allowlist** in `.agent/config.yml`
+(`promptTemplates:`), passed as repeated `--prompt-template <path>` arguments resolved on the trusted
+checkout. The default allowlist is this repository's Spec Kit set (`.pi/prompts/speckit.*.md`).
+Auto-discovery stays off (`--no-prompt-templates`).
+
+**Rationale**: "The Spec Kit prompts are irrelevant to the agent's own behaviour — but could I still
+use them?" separates two different things, and only one of them is true. *Discovery* must stay
+refused, because it lets arbitrary branch content add slash commands behind a reviewer's back.
+*Referencing* a named template is a different act: it loads Markdown instructions from a path a
+reviewer sees in a config diff, it is not executable, and Pi expands it before the text enters the
+agent, so `$ARGUMENTS` and `${1:-default}` substitution work exactly as they do locally.
+
+This buys a pleasing symmetry: a feature-sized issue becomes a Spec Kit run
+(`specify` → `plan` → `tasks`) whose artifacts are part of the proposal — this repository's own
+development loop, triggered from an issue instead of a terminal.
+
+Three properties make it safe here, verified rather than assumed:
+1. **Templates are inert.** They produce prompts, not tool registrations. The worst a bad template can
+   do is add instructions — and trust in reviewed repository instructions is already the model for
+   `.agent/instructions.md`.
+2. **Spec Kit performs no git operations in this repository.** `grep -n "git " .specify/scripts/bash/*.sh`
+   returns nothing: `create-new-feature.sh` computes a branch *name* and creates a directory, but never
+   switches, commits, or pushes. Branch creation is a hook responsibility (`.specify/extensions.yml`),
+   which does not exist here. A remote agent driving Spec Kit therefore cannot fight the orchestrator
+   for control of git state.
+3. **Artifacts land where they are reviewable.** Spec Kit writes `specs/**`, which the orchestrator
+   commits into the proposal like any other change.
+
+**Alternatives considered**:
+- *Mention the template paths in `.agent/instructions.md` and let the agent `read` them*: no new flag,
+  but it loses argument substitution and turns a defined command into ad-hoc interpretation. Kept as
+  the fallback for a template the agent should inspect but not invoke.
+- *Enable project prompt discovery (`--approve`) and rely on review*: rejected per D3 — it couples the
+  agent's available commands to whatever the branch happens to contain.
+- *Leave the templates unreachable*: honest but wasteful; the workflow vocabulary is already committed
+  and reviewed, and re-deriving it in prose is how drift starts.
+
+**Consequences to encode**:
+- **Interactive steps become thread steps.** `/speckit.clarify`, `[NEEDS CLARIFICATION]` handling, and
+  any hook prompt become a `waiting` state with a question comment, resumed by `/agent continue`. This
+  maps onto the existing state machine without adding a state (`contracts/labels.md`).
+- **The language rule still holds.** Spec Kit artifacts are committed content, so they must be English
+  (constitution I). `.agent/instructions.md` repeats the rule for the remote context, because a
+  non-English issue thread must not leak into `specs/**`.
+- **Scope guard.** A Spec Kit run starts only when the issue is large enough to justify a spec; small
+  fixes are made directly. Otherwise every typo spawns four documents and the spec's "request too
+  large or too vague" edge case has to absorb the mess.
+- **Bounded vocabulary.** The allowlist caps which commands exist for the agent, so its prompt surface
+  cannot drift without a config diff.
 
 ---
 
