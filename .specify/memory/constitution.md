@@ -1,30 +1,36 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 1.0.0 → 1.1.0
-Bump rationale: MINOR. A new principle (II. Root README Reflects Current Project State) is added and
-its guidance is expanded in Additional Constraints and Development Workflow. No existing principle is
-removed or redefined, so the change is backward-compatible.
+Version change: 1.1.0 (last committed) → 2.0.0
+Bump rationale: MAJOR. The constitution was restarted from the resolved `constitution-template`
+scaffold at the maintainer's request, keeping a single principle. Principle II (root README) from
+1.1.0 is removed and Principle I is redefined and narrowed to "generated content". Removal and
+redefinition of principles is backward incompatible by the versioning policy.
+
+Note: the working-tree drafts labelled 1.2.0 and 2.0.0 (AGENTS.md mirror / AGENTS.md reference) were
+discarded before this restart; they are not part of this document's lineage.
 
 Modified principles:
-  - I. English as the Standard Language (unchanged; Principle II inherits its English rule)
-  - II. Root README Reflects Current Project State (new)
+  - I. English as the Standard Language
+    → I. English for All Generated Content (redefined: applies to generated content, explicitly
+      permits other languages for communication and issue threads)
+  - II. Root README Reflects Current Project State → removed (intentional restart scope)
 
 Added sections:
-  - None (no new top-level sections)
-
-Expanded sections:
-  - Additional Constraints: definition of "current project state" for the root README
-  - Development Workflow: same-change README update gate
+  - Additional Constraints (scope of "generated content", inbound content in other languages,
+    exceptions)
 
 Removed sections:
-  - None
+  - None carried over from the template beyond the placeholders; the template's Additional
+    Constraints and Development Workflow slots are filled for the first time.
 
 Deferred TODOs:
-  - TODO(RATIFICATION_DATE_BASIS): Ratification date remains set to the date the Spec Kit scaffold
-    was committed (2026-10-26). Confirm this is the intended adoption date.
-  - Principle II is enforced by review only; no automated README freshness check exists yet. If one is
-    desired, it requires a separate specification.
+  - None. Ratification date is the fresh-start date of this document (2026-10-26).
+  - Judgment call to confirm: issue threads written in another language are treated as permitted
+    communication/inbound content, while everything the project itself produces stays English. If
+    issues are meant to be English-only as well, amend Principle I accordingly.
+  - Enforcement is review-based; no automated check exists yet. If one is desired, it requires a
+    separate specification.
 
 Notes for reviewers: This report is temporary scratch material and MUST be removed before the
 amended constitution is committed.
@@ -34,80 +40,58 @@ amended constitution is committed.
 
 ## Core Principles
 
-### I. English as the Standard Language
+### I. English for All Generated Content
 
-English is the standard language of this project. This is a non-negotiable rule for everything the
-project produces, not just for prose:
+Every piece of content generated for this project MUST be written in English. This holds regardless
+of the language used to discuss the work.
 
-- All documents MUST be written in English: README files, specification, plan, task, research and
-  checklist artifacts, architecture and design notes, runbooks, and inline documentation.
-- All source code MUST be written in English: identifiers (variables, functions, types, modules,
-  files and directories), comments, docstrings, log and error messages, and user-facing strings
-  unless a specific localization requirement states otherwise.
-- All machine-readable and collaborative artifacts MUST be in English: commit messages, branch and
-  tag names, pull request and review descriptions, issue text, configuration and schema field
-  names, and test names and descriptions.
+- All generated documents MUST be in English: README files, specification, plan, task, research and
+  checklist artifacts, design and architecture notes, runbooks, and inline documentation.
+- All generated code and code-adjacent content MUST be in English: identifiers (variables,
+  functions, types, modules, file and directory names), comments, docstrings, log and error
+  messages, and user-facing strings unless a specific localization requirement states otherwise.
+- All generated collaborative and machine-readable artifacts MUST be in English: commit messages,
+  branch and tag names, pull request descriptions, test names and descriptions, configuration keys,
+  and schema field names.
+- Communication and inbound content MAY be in another language. Chat conversations, review
+  discussions, meetings, and issue threads may be written in any language; a response inside such a
+  thread MAY use that thread's language. The language of the conversation MUST NOT change the
+  language of any artifact produced from it.
+- Every artifact derived from a non-English discussion — specification text, commit message,
+  documentation, code comment, summary — MUST be written in English.
 
-Communication MAY take place in other languages. Chat conversations, review discussions, meetings,
-and informal notes exchanged between contributors are explicitly out of scope of this rule; the
-language of discussion does not change the language of the resulting artifacts.
-
-Rationale: A single artifact language keeps the repository searchable, reviewable, and accessible to
-contributors and to the agents operating in this repository, and avoids mixed-language drift where
-identifiers, docs, and specs describe the same concept with different words. Restricting the rule to
-artifacts rather than conversations preserves contributors' freedom to think and discuss in their
-preferred language.
-
-### II. Root README Reflects Current Project State
-
-The `README.md` in the repository root is the primary entry point to the project and MUST always
-reflect the current, actual state of the project. It is normative documentation, not a historical
-snapshot:
-
-- The root `README.md` MUST be updated in the same change that alters the project state it
-  describes. Deferring the update to a later change is a violation, not a follow-up task.
-- It MUST accurately describe at minimum: the project's purpose, what currently works and what does
-  not, prerequisites and setup steps, how to run and verify the project, and the repository structure
-  contributors need to navigate.
-- It MUST NOT describe planned, removed, or aspirational functionality as if it were available, and
-  MUST NOT retain instructions that no longer work.
-- Any change that adds, removes, renames, or reconfigures a user-visible capability, command, tool,
-  dependency, or top-level directory MUST include the corresponding README update.
-- The root `README.md` MUST be written in English, consistent with Principle I.
-
-Rationale: A stale README is worse than none, because contributors and agents trust it and then act
-on wrong assumptions about how to build and run the project. Tying the update to the same change that
-alters the project state keeps the README verifiable at review time, when the author still has full
-context, instead of relying on discipline that decays.
+Rationale: A single artifact language keeps the repository searchable, reviewable, and unambiguous
+for every contributor and every agent, and prevents the same concept from being named differently in
+different languages across specs, code, and documentation. Limiting the rule to generated content
+rather than to people's conversations keeps contributors free to think, discuss, and report issues
+in whatever language they are most precise in, without leaking that choice into the project record.
 
 ## Additional Constraints
 
-**Definition of "current project state"**: For Principle II, the current project state covers every
-artifact the repository ships or documents: implemented capabilities and their status, tooling and
-workflow setup, required dependencies and versions, entry-point commands, and the top-level directory
-layout. Internal implementation detail that the README does not claim to cover is out of scope; any
-statement the README does make MUST be true at merge time.
+**Scope of "generated content"**: This principle governs artifacts produced by humans or agents as
+part of the project's engineering work: files written to the repository, content that becomes part
+of the project record, and text produced on the project's behalf. It applies to generated output
+only, not to the language in which contributors choose to communicate.
 
-**Scope of "documents and source code"**: This constitution governs artifacts that are created,
-generated, or modified as part of the project's engineering lifecycle. It applies equally to content
-produced by humans and by agents, including generated specifications, plans, tasks, code, tests, and
-commit messages.
+**Inbound content in other languages**: External input such as issue reports, user feedback,
+third-party documentation, and verbatim quotations MAY be in any language and MUST NOT be rewritten
+solely to satisfy this principle. Any content produced in response and committed or published as a
+project artifact MUST be in English.
 
-**Exception handling**: Localization assets (translation catalogs, localized user-facing resources)
-and verbatim quotations of external sources MAY contain other languages. Each exception MUST be
-required by an explicit feature requirement or external constraint; incidental non-English content
-is a violation, not an exception.
+**Exceptions**: Localization assets (translation catalogs, localized user-facing resources) and
+verbatim quotations of external sources MAY contain other languages. Each exception MUST be required
+by an explicit feature requirement or external constraint; incidental non-English content is a
+violation, not an exception.
 
 ## Development Workflow
 
 - Every review of a change MUST verify the language standard for the artifacts it touches; a change
-  with non-English artifact content is not compliant and MUST be corrected before merge.
-- Agents operating in this repository MUST apply the standard to everything they write to disk, and
-  MUST NOT introduce non-English identifiers or documentation as a side effect of a task.
-- Every review MUST verify that the root `README.md` is still accurate for the change under review;
-  an outdated root `README.md` blocks merge until corrected in the same change (Principle II).
-- When a task requires a language other than English in an artifact, the deviation MUST be declared
-  and justified in the specification or plan before implementation.
+  containing non-English generated content is not compliant and MUST be corrected before merge.
+- Agents operating in this repository MUST apply the standard to everything they write, including
+  summaries, commit messages, and follow-up notes, and MUST NOT mirror the language of the prompt
+  into repository artifacts.
+- When a feature genuinely requires non-English content in an artifact, the deviation MUST be
+  declared and justified in the specification or plan before implementation.
 
 ## Governance
 
@@ -122,8 +106,8 @@ existing artifacts will be brought into compliance.
 - PATCH: clarifications, wording fixes, and other non-semantic refinements.
 
 **Compliance review expectations**: All pull requests and reviews MUST verify compliance with the
-principles of this constitution, including the accuracy of the root `README.md`. Complexity or deviation that cannot be justified against a principle
-MUST be rejected rather than silently accepted. Identified non-compliance is tracked and resolved as
-part of the same change whenever feasible; otherwise it MUST be recorded as a follow-up before merge.
+principles of this constitution. Deviation that cannot be justified against a principle MUST be
+rejected rather than silently accepted. Identified non-compliance is tracked and resolved as part of
+the same change whenever feasible; otherwise it MUST be recorded as a follow-up before merge.
 
-**Version**: 1.1.0 | **Ratified**: 2026-10-26 | **Last Amended**: 2026-10-26
+**Version**: 2.0.0 | **Ratified**: 2026-10-26 | **Last Amended**: 2026-10-26
