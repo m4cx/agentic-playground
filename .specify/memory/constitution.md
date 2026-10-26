@@ -1,32 +1,30 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 0.0.0 (unratified scaffold) → 1.0.0
-Bump rationale: First ratified constitution. The scaffold contained only placeholders, so this is an
-initial adoption (MAJOR-equivalent) rather than an amendment to existing governance.
+Version change: 1.0.0 → 1.1.0
+Bump rationale: MINOR. A new principle (II. Root README Reflects Current Project State) is added and
+its guidance is expanded in Additional Constraints and Development Workflow. No existing principle is
+removed or redefined, so the change is backward-compatible.
 
 Modified principles:
-  - [PRINCIPLE_1_NAME] → I. English as the Standard Language (new, ratified)
-  - [PRINCIPLE_2_NAME] → removed (never ratified; no project requirement justified it)
-  - [PRINCIPLE_3_NAME] → removed (never ratified)
-  - [PRINCIPLE_4_NAME] → removed (never ratified)
-  - [PRINCIPLE_5_NAME] → removed (never ratified)
+  - I. English as the Standard Language (unchanged; Principle II inherits its English rule)
+  - II. Root README Reflects Current Project State (new)
 
 Added sections:
-  - Additional Constraints (document and code artifact scope of the language standard)
-  - Development Workflow (compliance review for generated artifacts)
-  - Governance (amendment procedure, versioning policy, compliance review expectations)
+  - None (no new top-level sections)
+
+Expanded sections:
+  - Additional Constraints: definition of "current project state" for the root README
+  - Development Workflow: same-change README update gate
 
 Removed sections:
-  - None (all template sections existed only as placeholder slots)
+  - None
 
 Deferred TODOs:
-  - TODO(RATIFICATION_DATE_BASIS): Ratification date is set to the date the Spec Kit scaffold was
-    committed (2026-10-26). Confirm this is the intended adoption date; adjust if the project was
-    formally adopted on a different date.
-  - Additional principles are intentionally deferred until the project defines further
-    non-negotiable rules (e.g., testing, architecture, tooling). Add them via the amendment
-    procedure rather than pre-emptively.
+  - TODO(RATIFICATION_DATE_BASIS): Ratification date remains set to the date the Spec Kit scaffold
+    was committed (2026-10-26). Confirm this is the intended adoption date.
+  - Principle II is enforced by review only; no automated README freshness check exists yet. If one is
+    desired, it requires a separate specification.
 
 Notes for reviewers: This report is temporary scratch material and MUST be removed before the
 amended constitution is committed.
@@ -60,7 +58,35 @@ identifiers, docs, and specs describe the same concept with different words. Res
 artifacts rather than conversations preserves contributors' freedom to think and discuss in their
 preferred language.
 
+### II. Root README Reflects Current Project State
+
+The `README.md` in the repository root is the primary entry point to the project and MUST always
+reflect the current, actual state of the project. It is normative documentation, not a historical
+snapshot:
+
+- The root `README.md` MUST be updated in the same change that alters the project state it
+  describes. Deferring the update to a later change is a violation, not a follow-up task.
+- It MUST accurately describe at minimum: the project's purpose, what currently works and what does
+  not, prerequisites and setup steps, how to run and verify the project, and the repository structure
+  contributors need to navigate.
+- It MUST NOT describe planned, removed, or aspirational functionality as if it were available, and
+  MUST NOT retain instructions that no longer work.
+- Any change that adds, removes, renames, or reconfigures a user-visible capability, command, tool,
+  dependency, or top-level directory MUST include the corresponding README update.
+- The root `README.md` MUST be written in English, consistent with Principle I.
+
+Rationale: A stale README is worse than none, because contributors and agents trust it and then act
+on wrong assumptions about how to build and run the project. Tying the update to the same change that
+alters the project state keeps the README verifiable at review time, when the author still has full
+context, instead of relying on discipline that decays.
+
 ## Additional Constraints
+
+**Definition of "current project state"**: For Principle II, the current project state covers every
+artifact the repository ships or documents: implemented capabilities and their status, tooling and
+workflow setup, required dependencies and versions, entry-point commands, and the top-level directory
+layout. Internal implementation detail that the README does not claim to cover is out of scope; any
+statement the README does make MUST be true at merge time.
 
 **Scope of "documents and source code"**: This constitution governs artifacts that are created,
 generated, or modified as part of the project's engineering lifecycle. It applies equally to content
@@ -78,6 +104,8 @@ is a violation, not an exception.
   with non-English artifact content is not compliant and MUST be corrected before merge.
 - Agents operating in this repository MUST apply the standard to everything they write to disk, and
   MUST NOT introduce non-English identifiers or documentation as a side effect of a task.
+- Every review MUST verify that the root `README.md` is still accurate for the change under review;
+  an outdated root `README.md` blocks merge until corrected in the same change (Principle II).
 - When a task requires a language other than English in an artifact, the deviation MUST be declared
   and justified in the specification or plan before implementation.
 
@@ -94,8 +122,8 @@ existing artifacts will be brought into compliance.
 - PATCH: clarifications, wording fixes, and other non-semantic refinements.
 
 **Compliance review expectations**: All pull requests and reviews MUST verify compliance with the
-principles of this constitution. Complexity or deviation that cannot be justified against a principle
+principles of this constitution, including the accuracy of the root `README.md`. Complexity or deviation that cannot be justified against a principle
 MUST be rejected rather than silently accepted. Identified non-compliance is tracked and resolved as
 part of the same change whenever feasible; otherwise it MUST be recorded as a follow-up before merge.
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-26 | **Last Amended**: 2026-10-26
+**Version**: 1.1.0 | **Ratified**: 2026-10-26 | **Last Amended**: 2026-10-26
