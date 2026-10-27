@@ -10,9 +10,10 @@ description: "Task list for the issue-driven agentic workflow"
 **Prerequisites**: `plan.md`, `spec.md`, `research.md`, `data-model.md`, `contracts/`, `quickstart.md`
 
 > **Note (2026-10-27)**: [`plan.md`](./plan.md) §"Amendment 2026-10-27" adds Pi runtime provisioning
-> and the privilege handoff. This task list predates that amendment and does not cover it; regenerate it
-> with `/speckit.tasks` before implementing the amendment. The fingerprint input list below is also
-> extended by that amendment with the pinned Pi version.
+> and the privilege handoff. The baseline tasks in this file are complete; the amendment's executable
+> tasks are in [§Amendment 2026-10-27](#amendment-2026-10-27-pi-runtime-provisioning-open) at the end of
+> this file (T091–T120) and are all open. The fingerprint input list below is extended by that amendment
+> with the pinned Pi version.
 
 **Tests**: Included. `plan.md` §Testing and `quickstart.md` require a specific test tree, and SC-014,
 SC-015 and the injection-resistance contract are only verifiable through those tests.
@@ -544,9 +545,10 @@ implement T047 and T073 before the remaining polish tasks.
 
 ## Implementation Status (recorded 2026-10-27)
 
-Marked `[X]` above: every task whose deliverable is code, configuration, workflow definition, or an
-automated test in this repository. The suite runs with `npm ci && npm run build && npm test`
-(141 tests: 122 unit, 19 integration against `tests/stub-pi.ts`).
+Marked `[X]` above: every baseline task whose deliverable is code, configuration, workflow definition, or
+an automated test in this repository. The suite runs with `npm ci && npm run build && npm test`
+(141 tests: 122 unit, 19 integration against `tests/stub-pi.ts`). The amendment tasks T091–T120 below
+are open and are not part of those counts yet.
 
 Left `[ ]` on purpose — these require a live sandbox repository and cannot be executed from the
 development checkout:
@@ -562,3 +564,310 @@ The three gate checks named in the Notes (S7 injection, S13 no-push/no-egress, S
 their automated coverage: the stub log asserts no repository credential reaches the agent process, the
 client surface has no merge/approve/force-push method, and permission denial is exercised at trigger and
 at decision time.
+
+---
+
+# Amendment 2026-10-27: Pi Runtime Provisioning (open)
+
+**Input**: [`plan.md`](./plan.md) §"Amendment 2026-10-27", [`research.md`](./research.md) D16/D17,
+[`data-model.md`](./data-model.md) §10, [`contracts/pi-rpc.md`](./contracts/pi-rpc.md) §"Runtime
+preconditions" and §"Privilege handoff and workspace ownership", [`quickstart.md`](./quickstart.md) S15.
+
+**Scope**: Close the two blockers recorded in the plan: Pi is not provisioned in the Actions job, and
+the Pi-spawning job steps cannot drop privileges because they run unprivileged. This is a cross-cutting
+enabler, not a new user story; it blocks every story until complete.
+
+**Tests**: Included. The plan's acceptance table and `contracts/pi-rpc.md` require unit tests for
+resolution/validation and integration tests for the spawn shape, workspace boundary, and teardown.
+
+**Execution order**: T091–T120 below. The baseline tasks T001–T090 stay as they are; no task ID is
+reused.
+
+## Phase 9: Amendment Setup — Pi runtime resolution (blocking)
+
+**Purpose**: Make the pinned Pi package discoverable and its version verifiable without `PATH`, a
+global install, or a hardcoded `"1.4.0"`.
+
+- [ ] T091 Create `src/agent/pi-runtime.ts` with `PiRuntimeError` and `readPinnedPiVersion(repoRoot)`:
+      read `<repoRoot>/package.json` and `<repoRoot>/package-lock.json`; require
+      `dependencies["@earendil-works/pi-coding-agent"]` to match the exact form
+      `^\d+\.\d+\.\d+$`; require `packages["node_modules/@earendil-works/pi-coding-agent"].version`
+      to equal it; throw `PiRuntimeError` with reason `environment` naming the file and key when the
+      pin is missing, ranged, or inconsistent. Export a pure `assertPiRuntime` helper that takes
+      `{repoRoot, packageRoot, entry, installedVersion, pinnedVersion, lockedVersion}` so validation is
+      testable without touching the real `node_modules`.
+- [ ] T092 Add `resolvePiRuntime(repoRoot)` to `src/agent/pi-runtime.ts`: use
+      `import.meta.resolve("@earendil-works/pi-coding-agent")`, walk up from the resolved module to the
+      nearest `package.json`, read `bin.pi`, and return
+      `{nodePath: process.execPath, entry, version}`. Reject an entry outside
+      `<repoRoot>/node_modules/`, a missing/non-file entry, an installed version that differs from the
+      pin, or a `bin.pi` that is absent.
+- [ ] T093 [P] Write `tests/unit/pi-runtime.test.ts`: success returns the resolved shape with a bare
+      `PATH`; a ranged pin, an installed/locked version mismatch, an entry outside `node_modules`, and a
+      missing `bin.pi` each fail with reason `environment` and a message naming the offending key.
+- [ ] T094 [P] Extend `src/agent/config.ts`: add `piVersion` to `computeFingerprint` and to
+      `loadConfig`'s inputs via `loadConfig(repoRoot, options?: { piVersion?: string })`, defaulting to
+      `readPinnedPiVersion(repoRoot)` when the caller does not inject one; keep every existing
+      fingerprint input unchanged. `src/agent/main.ts` passes the resolved pin explicitly (T097); tests
+      may inject a fixed version without touching `node_modules`.
+- [ ] T095 [P] Extend `tests/unit/config.test.ts`: changing only `piVersion` changes the fingerprint;
+      each existing input still changes it; a missing or malformed pin fails with `environment`.
+
+**Checkpoint**: `npm run build` succeeds, `tests/unit/pi-runtime.test.ts` and
+`tests/unit/config.test.ts` pass, and `resolvePiRuntime(process.cwd())` returns the pinned 1.4.0 entry
+with `PATH=/usr/bin:/bin`.
+
+---
+
+## Phase 10: Amendment Foundational — process, workspace, and job wiring (blocking)
+
+**Purpose**: Make the resolved runtime actually launchable under the egress uid, and make the workspace
+safe to hand to the agent before git runs as root.
+
+- [ ] T096 Update `src/agent/pi-session.ts`: replace `piCommand`/`argPrefix`/the hardcoded default
+      `piVersion` with a required `runtime: PiRuntime`; spawn
+      `spawn(runtime.nodePath, [runtime.entry, ...buildLaunchArgs(...)])`; keep `--mode rpc` in
+      `buildLaunchArgs`; add an explicit child environment with `HOME`, `TMPDIR`, and `XDG_CACHE_HOME`
+      under the session directory; spawn `detached: true`; in `dispose`/teardown kill the process group
+      and, when `egressUid` is set, reap every process owned by `AGENT_EGRESS_UID` before returning.
+      Inject the kill/reap operations (or a `spawnImpl`) so tests can assert the order without root.
+- [ ] T097 Update `src/agent/main.ts`: read `AGENT_ENV_FILE` once (mode `0600`), unlink it immediately,
+      merge `GITHUB_TOKEN` and `ANTHROPIC_API_KEY` into the orchestrator environment, and keep the
+      existing `sanitizeEnvironment` stripping for the Pi child. Resolve the Pi runtime *before* posting
+      `agent:ack`; assert uid 0 when `AGENT_EGRESS_UID` is set; pass the runtime to `createSession`; use
+      `runtime.version` in the acknowledgement instead of a literal. A resolution or privilege failure
+      posts `agent:error` with reason `environment` and does not post an acknowledgement.
+- [ ] T098 Update `src/agent/workspace.ts` with `prepareAgentWorkspace(repoRoot, egressUid)`: after
+      checkout, move `.git` to a root-owned mode-`0700` `GIT_DIR` under `RUNNER_TEMP` and remove any
+      `.git` entry from the work tree; chown the work tree recursively to the egress uid **except**
+      `node_modules/`; ensure execute permission on the ancestors of `GITHUB_WORKSPACE` for the egress
+      uid. Update every git command to use `--git-dir=<GIT_DIR> --work-tree=<repoRoot>`, `-c
+      safe.directory=<repoRoot>`, and `-c core.hooksPath=/dev/null`; pass `--no-verify` on commit;
+      replace `http.extraheader` argv with `GIT_CONFIG_COUNT=1`,
+      `GIT_CONFIG_KEY_0=http.extraheader`, and `GIT_CONFIG_VALUE_0=AUTHORIZATION: basic <token>` in the
+      git child's environment; assert `GIT_DIR/config` contains no credential after the push.
+- [ ] T099 Add the egress probe to `prepareAgentWorkspace` in `src/agent/workspace.ts` and call it from
+      `src/agent/main.ts` before `agent:ack`: as the egress uid, a work-tree write must succeed while
+      `GIT_DIR` is unreadable/unwritable, no `.git` exists in the work tree, and `node_modules/` is
+      unwritable. Any inverted result throws a workspace error with reason `environment`. Accept a
+      `uid`/`spawnProbe` seam so the probe is unit-testable without root.
+- [ ] T100 [P] Update `.github/workflows/agent-run.yml`: write a mode-`0600` `AGENT_ENV_FILE`
+      containing `GITHUB_TOKEN` and `ANTHROPIC_API_KEY`; run the `run` mode through
+      `sudo --preserve-env=GITHUB_EVENT_PATH,GITHUB_EVENT_NAME,GITHUB_REPOSITORY,GITHUB_RUN_ID,GITHUB_WORKSPACE,RUNNER_TEMP,AGENT_EGRESS_UID,AGENT_ENV_FILE`
+      with `"$(command -v node)" dist/src/agent/main.js run`; leave `prepare` unprivileged.
+- [ ] T101 [P] Update `.github/workflows/agent-command.yml` with the same env-file and `sudo
+      --preserve-env` handoff for the `command` mode; leave `prepare` unprivileged.
+- [ ] T102 [P] Update `.github/scripts/agent-egress.sh`: after applying the rules, verify that the
+      egress user can traverse to `$GITHUB_WORKSPACE` (execute on each ancestor, not listing) and fail
+      closed with a clear `agent-egress:` message when it cannot.
+- [ ] T103 [P] Update `tests/fake-github.ts`: inject
+      `runtime: {nodePath: process.execPath, entry: <dist/tests/stub-pi.js>, version: "1.4.0"}` instead
+      of `piCommand`/`argPrefix`/`piVersion`; keep `STUB_PI_*` behaviour and the no-token assertion.
+
+**Checkpoint**: `npm test` compiles; the stub-backed run reaches `finished`; the workflow YAML parses;
+and `rg '"1\.4\.0"' src/` finds no hardcoded version.
+
+---
+
+## Phase 11: User story re-validation on the provisioned runtime
+
+**Purpose**: Prove each existing story still works when Pi is resolved from the package and runs under
+the egress uid. These are verification tasks; the feature behaviour is unchanged.
+
+### User Story 1 — Provisioned Pi answers a request (Priority: P1) 🎯 MVP
+
+- [ ] T104 [P] [US1] Add `tests/integration/pi-launch.test.ts`: assert the spawned command is
+      `process.execPath` with the resolved `entry`, `--mode rpc` is present, no bare `pi` is spawned,
+      the child environment contains `ANTHROPIC_API_KEY` but no `GITHUB_TOKEN`/`GH_TOKEN`, and `cwd` is
+      the repository root.
+- [ ] T105 [US1] Update `tests/integration/run-lifecycle.test.ts`: the `agent:ack` reports the injected
+      runtime version (not a constant), the run reaches `finished` against the stub, and a runtime
+      resolution failure posts `agent:error`/`environment` without an acknowledgement.
+
+### User Story 2 — Proposal still cannot execute agent-controlled git
+
+- [ ] T106 [P] [US2] Add `tests/integration/workspace-git.test.ts`: git is invoked with the separate
+      `GIT_DIR`/work tree, `core.hooksPath=/dev/null`, and `--no-verify`; the push token appears in the
+      child environment via `GIT_CONFIG_VALUE_0` and in no argument; `GIT_DIR/config` is clean after the
+      push.
+
+### User Story 3 — Progress and halt still work with the detached process group
+
+- [ ] T107 [P] [US3] Update `tests/integration/halt-boundary.test.ts` and
+      `tests/integration/budget-stop.test.ts`: the `abort` boundary still fires when the child is a
+      detached group leader, and teardown reaps the group before the diff is collected.
+
+### User Story 4 — Configuration and Pi upgrade change the fingerprint
+
+- [ ] T108 [P] [US4] Extend `tests/unit/messages.test.ts`: `renderAck` renders the supplied
+      `piVersion` and fingerprint (no built-in `"1.4.0"` default), and the S14 Pi-upgrade variant in
+      `quickstart.md` is consistent with the rendered fields.
+
+### User Story 5 — Egress and workspace boundaries fail closed
+
+- [ ] T109 [P] [US5] Add `tests/unit/egress-preflight.test.ts` (or extend the workspace test): a
+      work-tree write succeeds; writes to `GIT_DIR`, a `.git` entry in the work tree, and
+      `node_modules/` are rejected; a missing egress user or a non-root orchestrator with
+      `AGENT_EGRESS_UID` set fails with `environment`. Inject the uid/probe seam from T099; do not
+      require root in the test suite.
+
+**Checkpoint**: T104–T109 pass with the stub, and each story's existing integration test is green.
+
+---
+
+## Phase 12: Amendment Polish & Sandbox Validation
+
+- [ ] T110 [P] Update `.agent/README.md`: the Pi version is pinned by
+      `package.json`/`package-lock.json`, is not editable in `.agent/config.yml`, participates in the
+      fingerprint, and requires no global install.
+- [ ] T111 [P] Update `specs/001-issue-driven-agent-workflow/quickstart.md` S15 and the troubleshooting
+      table to match the implemented log line, `AGENT_ENV_FILE`, `GIT_DIR`, and `pkill` reap commands.
+- [ ] T112 [P] Update `specs/001-issue-driven-agent-workflow/plan.md` §"Implementation Notes" with any
+      divergence from D16/D17 discovered during implementation; do not change requirements.
+- [ ] T113 Run `npm ci --ignore-scripts && npm run build && npm test` and `npm run typecheck`; fix any
+      failures in `src/agent/**` or `tests/**`; record the new unit/integration counts.
+- [ ] T114 [P] Static audit: `rg -n '"1\.4\.0"' src/` (no hardcoded version),
+      `rg -n 'spawn\("pi"|spawnSync\("pi"' src/` (no bare `pi`), and
+      `rg -n 'http\.extraheader' src/` (credential only via git environment); each result must be empty
+      or explained in `plan.md` §"Implementation Notes".
+- [ ] T115 [P] Sandbox validation: run `quickstart.md` S15 on a clean `ubuntu-24.04` runner with no
+      global `pi`; verify uid 0 orchestrator/uid `AGENT_EGRESS_UID` child, `GIT_DIR` isolation,
+      no token in `argv` or `environ`, and the `pkill` reap.
+- [ ] T116 [P] Sandbox regression: rerun S1, S2, S5, S13, and S14 with the provisioned runtime; record
+      the results in `quickstart.md` or the validation issue.
+- [ ] T117 Security review: confirm `AGENT_ENV_FILE` is unlinked before Pi starts, `GIT_DIR` is
+      root-owned `0700` and outside the work tree, `.git` is absent from the work tree, `node_modules/`
+      is unwritable by the egress uid, and no credential reaches `GIT_DIR/config`; record findings in
+      `specs/001-issue-driven-agent-workflow/plan.md` §"Implementation Notes".
+- [ ] T118 Re-read `.specify/memory/constitution.md` and audit every new comment, identifier, log line,
+      test name, and document for English-only content (constitution I, FR-019).
+- [ ] T119 Update `specs/001-issue-driven-agent-workflow/tasks.md` §"Implementation Status" with the
+      amendment's completed/open tasks and the new test counts.
+- [ ] T120 Mark the amendment in `specs/001-issue-driven-agent-workflow/plan.md` as **Implemented**,
+      link the implementing commit, and record any remaining sandbox-only task.
+
+---
+
+## Amendment Dependencies & Execution Order
+
+### Phase dependencies
+
+- **Phase 9 (T091–T095)**: starts immediately; blocks Phase 10.
+- **Phase 10 (T096–T103)**: depends on Phase 9; blocks Phase 11.
+- **Phase 11 (T104–T109)**: depends on Phase 10; each story verification can run in parallel.
+- **Phase 12 (T110–T120)**: depends on all desired story verifications.
+
+### Within Phase 9
+
+- T091 → T092 → T093.
+- T091 → T094 → T095.
+- The T092/T093 branch and the T094/T095 branch can run in parallel after T091.
+
+### Within Phase 10
+
+- T096 → T097.
+- T097 → T098 → T099.
+- T100, T101, T102, and T103 can run in parallel once T097/T099 are complete.
+- T103 must not be merged before T096/T097, or the harness will still pass `piCommand`.
+
+### Within Phase 11
+
+- T104 and T105 depend on T103.
+- T106 depends on T098/T099.
+- T107 depends on T096.
+- T108 depends on T094.
+- T109 depends on T099.
+- T104, T106, T107, T108, and T109 touch different files and can run in parallel; T105 shares
+  `tests/integration/run-lifecycle.test.ts` with the harness and should follow T104.
+
+### Story independence
+
+- The amendment enables all stories; it does not change their behaviour. Each story verification is
+  independently runnable against the stub, and a failure in one does not block the others after Phase
+  10.
+
+---
+
+## Amendment Parallel Example
+
+```bash
+# After T091: resolution and fingerprint branches
+Task: "T092 Add resolvePiRuntime to src/agent/pi-runtime.ts"
+Task: "T094 Add piVersion to computeFingerprint in src/agent/config.ts"
+
+# After T097/T099: job wiring and harness
+Task: "T100 Update .github/workflows/agent-run.yml with the sudo handoff"
+Task: "T101 Update .github/workflows/agent-command.yml with the sudo handoff"
+Task: "T102 Harden traversal check in .github/scripts/agent-egress.sh"
+Task: "T103 Inject a stub runtime in tests/fake-github.ts"
+
+# After the harness: story re-validation
+Task: "T104 Add tests/integration/pi-launch.test.ts"
+Task: "T106 Add tests/integration/workspace-git.test.ts"
+Task: "T107 Update tests/integration/halt-boundary.test.ts"
+Task: "T108 Extend tests/unit/messages.test.ts for the ack version"
+Task: "T109 Add tests/unit/egress-preflight.test.ts"
+```
+
+---
+
+## Amendment Implementation Strategy
+
+### MVP for the amendment (T091–T105)
+
+1. Complete Phase 9: Pi resolves from the package, the version is asserted, and the fingerprint includes
+   it.
+2. Complete T096–T099: the session spawns the resolved runtime, the workspace has a separate `GIT_DIR`,
+   and the egress preflight fails closed.
+3. Complete T100–T103: the two Pi-spawning workflows use the sudo handoff and the test harness injects
+   the stub runtime.
+4. Complete T104–T105: the spawn shape is asserted and US1's run lifecycle is green.
+5. **STOP and validate**: no global `pi`, `PATH=/usr/bin:/bin`, US1 round trip.
+
+This is the smallest increment that makes the reported symptom disappear. Everything after it hardens
+the privilege/workspace boundary and re-validates the other stories.
+
+### Incremental delivery
+
+1. Phase 9 → runtime resolution + fingerprint.
+2. Phase 10 → privilege handoff, workspace, workflows.
+3. Phase 11 → US1–US5 re-validation.
+4. Phase 12 → docs, static audit, sandbox S15/regressions, status.
+
+### Non-negotiables
+
+- T098/T099 (separate `GIT_DIR`, `node_modules` read-only) must land before T106 or the workspace test
+  will pass against an unsafe layout.
+- T097's "no acknowledgement on a runtime/privilege failure" must land before T105, otherwise the test
+  encodes the old misleading ack.
+- T117 (security review) is not optional: the root orchestrator is introduced by this amendment.
+
+---
+
+## Amendment Traceability
+
+| Concern | Tasks |
+|---|---|
+| Blocker 1: Pi provisioning | T091–T095, T096, T104, T105, T114 |
+| Blocker 2: privilege handoff | T097–T103, T106, T107, T109, T117 |
+| FR-002, FR-034 (runs off-machine, egress) | T097, T099, T102, T109, T115 |
+| FR-014, research D5/D16 (fingerprint, no stale session) | T094, T095, T108 |
+| FR-018, FR-021, SC-010 (no credential leak) | T097, T098, T099, T106, T117 |
+| FR-031, SC-013 (no retry, resume without repeat) | T107 |
+| SC-005 (reconstructable record) | T105, T108 |
+| SC-015 (explicit trigger) | T105 |
+| Constitution I, FR-019 (English artifacts) | T118 |
+| Quickstart S15 | T111, T115, T116 |
+
+---
+
+## Amendment Notes
+
+- [P] means a different file and no dependency on an incomplete task; it is not a priority signal.
+- Every task that changes a workflow must keep `permissions` at the documented minimum; do not add a
+  permission to make Pi or git easier.
+- Do not commit `dist/`, `node_modules/`, session files, or the mode-`0600` `AGENT_ENV_FILE`.
+- The root orchestration is deliberate and limited to the two Pi-spawning modes; `prepare`, `proposal`,
+  and `sweep` stay unprivileged.
+- The amendment is complete only when T115/T116 have run on a hosted runner; the unit and stub tests
+  cannot prove uid, iptables, or traversal behaviour.
