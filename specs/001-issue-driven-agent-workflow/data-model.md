@@ -54,8 +54,8 @@ One attempt to fulfil a request.
 | `state` | enum | Label + status log | Append-only state log in the status comment; label mirrors it | One of the states in the state machine below (FR-010) |
 | `startedAt` / `endedAt` | timestamps | Orchestrator | `agent:ack`; state-log row | `endedAt` required before a terminal state is declared (FR-011); `startedAt` minus the trigger time is the queue delay reported in the acknowledgement (SC-016) |
 | `instructionsVersion` | commit SHA + hash of `.agent/instructions.md` | Workspace | `agent:ack` | Recorded so behaviour is reproducible (FR-014, SC-005) |
-| `piVersion`, `modelId`, `thinking` | strings | `.agent/config.yml` + Pi | `agent:ack` | Pinned; recorded per run (D12) |
-| `fingerprint` | hash of instructions content + `model` + `thinking` + `tools` + `promptTemplates` | `.agent/config.yml`, workspace | `agent:ack` (short form) | Determines whether a stored session may be resumed (research D5, `contracts/config.md`) |
+| `piVersion`, `modelId`, `thinking` | strings | Resolved Pi package (installed + `package-lock.json`) for `piVersion`; `.agent/config.yml` for `modelId`/`thinking` | `agent:ack` | `piVersion` must equal the exact dependency pin and is never hardcoded; `modelId`/`thinking` come from configuration (D12, research D16) |
+| `fingerprint` | hash of instructions content + `model` + `thinking` + `tools` + `promptTemplates` + pinned Pi version | `.agent/config.yml`, `package-lock.json`, workspace | `agent:ack` (short form) | Determines whether a stored session may be resumed; a Pi upgrade changes it (research D5, D16, `contracts/config.md`) |
 | `consumption` | `{costUsd, tokens, toolCalls, turns}` | `get_session_stats` at each boundary | Status-log rows, `agent:session`, `agent:result` | Monotonic within a session; the per-issue total is the sum of the documented sessions (§8), so a lost cache cannot reset it |
 | `continuesRunId` | identifier, optional | Thread record | `agent:ack`, status-log row | Set when started by a retry or continue command (FR-032) |
 | `outcome` | `finished` \| `failed` \| `halted` \| `rejected` | Final transition | `agent:result` / `agent:error` | `rejected` is issue-level, not run-level; `halted` ends the run but leaves the issue resumable (see the label table) |
@@ -116,7 +116,7 @@ lost, so an issue can have several sessions over its life.
 | Field | Type | Source | Durable artifact (FR-016) | Validation |
 |-------|------|--------|---------------------------|------------|
 | `sessionId` | `agent-issue-<n>-<fingerprint-short>` | Launch arguments | `agent:session` message | Unique per issue and fingerprint |
-| `fingerprint` | hash | `.agent/config.yml` + instructions | `agent:ack`, `agent:session` | Equal on both sides of a resume (FR-014, research D5) |
+| `fingerprint` | hash | `.agent/config.yml` + instructions + pinned Pi version | `agent:ack`, `agent:session` | Equal on both sides of a resume; includes `piVersion` so an upgrade starts a fresh session (FR-014, research D5/D16) |
 | `runs` | list of run ids | Orchestrator | `agent:session` | Every run of this session is listed |
 | `consumed` | `{costUsd, tokens, turns, toolCalls}` | `get_session_stats` at session end | `agent:session` | Recorded per session, never folded into a single number |
 | `endedBecause` | `finished` \| `halted` \| `failed` \| `lost` | Orchestrator | `agent:session` | `lost` when the cache disappeared without a recorded end |
@@ -137,9 +137,25 @@ Repository-stored behaviour configuration.
 | `version` | commit SHA + content hash | Git | Applied to new runs only (FR-014) |
 | `limits` | see `contracts/config.md` | Config | Schema-validated; an invalid value fails the run before any model call |
 | `promptTemplates` | list of paths | Config | Each path must exist on the trusted ref, be a `.md` file under the repository, and be loaded explicitly with `--prompt-template`. Empty list is valid: the agent then has no slash commands at all (research D13) |
-| `fingerprint` | hash | Derived from instructions content, `model`, `thinking`, `tools`, `promptTemplates` | Must be equal on both sides of a session resume; a mismatch forces a fresh session (FR-014, research D5) |
+| `fingerprint` | hash | Derived from instructions content, `model`, `thinking`, `tools`, `promptTemplates`, and the pinned Pi version | Must be equal on both sides of a session resume; a mismatch forces a fresh session (FR-014, research D5/D16) |
 
-### 10. Audit Entry
+### 10. Pi Runtime
+
+Not a durable record. It describes the process the orchestrator is allowed to start, and every field is
+checked before the acknowledgement and before the first model call. Only `version` reaches the repository
+(in `agent:ack`); the paths stay in the job log so the record is not tied to one runner image.
+
+| Field | Type | Source | Validation |
+|-------|------|--------|------------|
+| `nodePath` | absolute path | `process.execPath` | The interpreter that also runs the orchestrator; not from `PATH` |
+| `entry` | absolute path | `<repoRoot>/node_modules/@earendil-works/pi-coding-agent/<package.json#bin.pi>` | Must exist, be a file, and be readable/executable by the egress uid; must not resolve outside `<repoRoot>/node_modules` |
+| `version` | semver string | Installed package `package.json` | Must equal the exact dependency pin in the root `package.json` and the `package-lock.json` version; recorded in `agent:ack` (research D16) |
+| `egressUid` | uid, optional | `AGENT_EGRESS_UID` written by `agent-egress.sh` | When present, the orchestrator must be uid 0 and the preflight probe must show a writable work tree, an unreachable `GIT_DIR`, no `.git` in the work tree, and a read-only `node_modules/` (research D17) |
+| `workTreeOwner` | uid, optional | Orchestrator before spawn | Recursively the egress uid, so the agent can edit and create files, except `node_modules/` which stays read-only |
+| `gitDir` | absolute path | Orchestrator after checkout | Outside the work tree under `RUNNER_TEMP`, root-owned mode `0700`; the egress uid cannot read or write it and the work tree has no `.git` |
+| `home`, `tmpDir`, `cacheDir` | absolute paths | Orchestrator | Inside the chowned session directory, so the no-home egress user can write |
+
+### 11. Audit Entry
 
 Not a separate store. It is the ordered join of Status Updates, Decisions, and the proposal links for
 one issue — which is why the record can be reconstructed from the repository alone (FR-016). Because
@@ -185,3 +201,5 @@ from the state labels: it is the *request* to work, not a state.
 | V9 | FR-031 | Any retry signal from the harness (`auto_retry_*`, `summarization_retry_*`, `compaction_*`, `willRetry`) aborts the run and fails it with `unexpected-retry` |
 | V10 | FR-034 | The egress restriction is applied before Pi starts; if it cannot be applied, the run fails with `environment` and no model call happens |
 | V11 | FR-033 | `pull_request.closed` is observed and written to the thread as `agent:outcome` plus a decision record; a close with an unobserved actor is recorded as `unknown` rather than guessed |
+| V12 | FR-002, research D16 | Pi is resolved from the pinned package under `<repoRoot>/node_modules` and launched with `process.execPath`; `PATH`, a global install, and a range dependency all fail the run with `environment` before any model call |
+| V13 | FR-034, research D17 | When egress is enforced by uid, the orchestrator is uid 0, Pi is the egress uid, the work tree is agent-writable while the git directory and `node_modules/` are outside its write reach, and the process group plus the uid-wide reap completes before diff collection |

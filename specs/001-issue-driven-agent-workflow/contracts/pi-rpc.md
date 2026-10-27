@@ -8,8 +8,12 @@ not reach into Pi's internals or depend on anything outside the documented shape
 
 ## Launch
 
+The orchestrator never invokes `pi` from `PATH` and never relies on a global install. It resolves the
+pinned package's CLI entry — `<repoRoot>/node_modules/@earendil-works/pi-coding-agent/<package.json#bin.pi>`
+— and executes it with the running Node binary (research D16, `contracts/config.md` Rule 9):
+
 ```bash
-pi --mode rpc \
+"$NODE" "$PI_ENTRY" --mode rpc \
    --offline \
    --no-approve \
    --no-extensions --no-skills --no-mcp --no-prompt-templates \
@@ -40,6 +44,23 @@ pi --mode rpc \
 Context files (`AGENTS.md`) stay enabled: they are project documentation the agent should respect
 (the constitution is referenced there).
 
+### Runtime preconditions
+
+Before the acknowledgement that reports the version — and therefore before the first prompt — the run
+fails with `environment` unless all of the following hold. No model call happens and no partial session
+is written.
+
+| Precondition | Why |
+|--------------|-----|
+| The package resolves from `<repoRoot>/node_modules/`, not from a parent or global location | The running agent must be the reviewed dependency, not whatever the runner image provides |
+| `dependencies["@earendil-works/pi-coding-agent"]` in the root `package.json` is an exact version | A range would allow silent behaviour drift (research D12) |
+| The installed version and the `package-lock.json` version both equal that pin | The version recorded in `agent:ack` must be the version that executed |
+| `bin.pi` is a readable, executable file for the egress uid | A missing entry would otherwise surface as an opaque spawn error |
+| When `AGENT_EGRESS_UID` is set, the orchestrator has uid 0 | Dropping to the egress uid is a privileged operation (research D17) |
+
+The resolved version, not a constant, is what `agent:ack` reports. A spawn failure after these checks
+is still classified as `environment`.
+
 ## Continuity
 
 A stored Pi session may only be resumed when it was produced under the same configuration. Pi persists
@@ -50,9 +71,10 @@ direct violation of FR-014.
 Rules:
 
 1. The session identity is `agent-issue-<number>-<fingerprint-short>`, where the fingerprint covers the
-   instructions content hash, `model`, `thinking`, `tools`, and `promptTemplates` (`contracts/config.md`).
-2. The cache key uses the same fingerprint, so a configuration change starts from a cold cache rather than
-   from a stale session.
+   instructions content hash, `model`, `thinking`, `tools`, `promptTemplates`, and the pinned Pi version
+   (`contracts/config.md`).
+2. The cache key uses the same fingerprint, so a configuration change or a Pi upgrade starts from a cold
+   cache rather than from a stale session.
 3. After start and before the first prompt, the orchestrator reads `get_state` and asserts that the
    effective tool list is a subset of the configured allowlist and that `modelId` matches the
    configuration. A mismatch fails the run with `environment` instead of running under old rules.
@@ -81,13 +103,44 @@ The agent process runs with no outbound access except the model provider endpoin
 A run whose egress restriction cannot be applied fails with `environment` instead of starting the agent
 (FR-034). `bash` remains available for local work, but it has nowhere to send anything.
 
+### Privilege handoff and workspace ownership
+
+The egress policy is applied per uid, so the orchestrator must be able to `setuid` the Pi child. The
+`run` and `command` workflow steps therefore execute the orchestrator through
+`sudo --preserve-env=…`; `prepare`, `proposal`, and `sweep` stay unprivileged because they never spawn
+Pi. The preserved set is non-secret only (`GITHUB_EVENT_PATH`, `GITHUB_EVENT_NAME`, `GITHUB_REPOSITORY`,
+`GITHUB_RUN_ID`, `GITHUB_WORKSPACE`, `RUNNER_TEMP`, `AGENT_EGRESS_UID`, `AGENT_ENV_FILE`); Node is
+invoked by absolute path because `sudo` resets `PATH`. Secrets travel in a mode-`0600` file named by
+`AGENT_ENV_FILE`, which root can read and the egress uid cannot; the orchestrator reads it once and
+unlinks it before spawning Pi. This avoids relying on the runner image granting `SETENV` for secret
+variables and keeps the token out of every argument list.
+
+| Boundary | Rule | Why |
+|----------|------|-----|
+| Orchestrator uid | 0 when `AGENT_EGRESS_UID` is set; otherwise the run fails with `environment` | An unprivileged process cannot drop privileges; a silent fallback to root-Pi is forbidden |
+| Pi uid | exactly `AGENT_EGRESS_UID`, verified by a preflight probe | The iptables owner match is the whole egress control |
+| Work tree | recursively owned by the egress uid so `edit`/`write` can change existing files, except `node_modules/`, which stays read-only | A root-owned checkout would make every edit fail with `EACCES`; a writable `node_modules/` would let the agent rewrite its own harness |
+| Ancestor traversal | execute permission for the egress uid on the path from `/` to `GITHUB_WORKSPACE` | The runner home is not guaranteed to be world-traversable; the egress uid needs the path, not a listing |
+| Git directory | outside the work tree, under `RUNNER_TEMP`, root-owned mode `0700`; the work tree has no `.git` | The egress uid owns the work-tree root and could delete or replace an in-tree `.git`; a replacement could carry a malicious `core.fsmonitor` or hooks |
+| Git invocation | `--git-dir=<GIT_DIR> --work-tree=<repoRoot>`, `-c safe.directory=<repoRoot>`, `-c core.hooksPath=/dev/null`, `--no-verify` | Defense in depth; the git directory is already unreachable by the agent |
+| Push credential | `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_0` / `GIT_CONFIG_VALUE_0` in the git child's environment, never argv | `/proc/<pid>/environ` is owner-readable; `/proc/<pid>/cmdline` is world-readable |
+| Teardown | Pi is a process-group leader; the group is killed, then every remaining process of the egress uid is reaped before the diff is collected | Covers even a process the agent started with `setsid` |
+
+A preflight probe runs as the egress uid before the acknowledgement: it must succeed on a work-tree
+write, fail to read or write `GIT_DIR`, find no `.git` entry in the work tree, and fail to write under
+`node_modules/`. Either result going the other way fails the run with `environment` instead of starting
+the agent. The secret file is unlinked before this probe, so Pi cannot inherit a path to it.
+
 ## Environment
 
 | Variable | Present | Reason |
 |----------|---------|--------|
-| Provider key (e.g. `ANTHROPIC_API_KEY`) | yes | The only credential Pi needs |
-| `GITHUB_TOKEN` / `GH_TOKEN` | **no** | Hard rule: no repository authority inside the agent process (FR-029, research D10). The orchestrator strips it from the child environment explicitly, and a unit test asserts this |
-| `.git/config` credential helper / remote token | **no** | The checkout runs with `persist-credentials: false`; the orchestrator adds a per-job credential only for its own push and removes it afterwards. A unit test asserts the workspace git config contains no token before Pi starts (research D10, layer c) |
+| Provider key (e.g. `ANTHROPIC_API_KEY`) | yes | The only credential Pi needs; read once from the mode-`0600` `AGENT_ENV_FILE` and passed only to the Pi child |
+| `GITHUB_TOKEN` / `GH_TOKEN` | **no** | Hard rule: no repository authority inside the agent process (FR-029, research D10). The token is read from `AGENT_ENV_FILE` into the orchestrator and stripped from the child environment explicitly; a unit test asserts this. The file is unlinked before Pi starts |
+| `.git/config` credential helper / remote token | **no** | The checkout runs with `persist-credentials: false`; the git directory lives outside the work tree and only the orchestrator reads it. The push credential is passed per invocation and never written to its config. A unit test asserts the workspace git config contains no token before Pi starts (research D10, layer c) |
+| `HOME`, `TMPDIR`, `XDG_CACHE_HOME` | yes, under the chowned session directory | The egress user is created with `--no-create-home`; Pi must not fall back to an unwritable home |
+| `PATH` | yes, without any Pi entry | Needed by the agent's own `bash` tool; Pi itself is launched by absolute path, so `PATH` cannot change which Pi runs |
+| `NODE_COMPILE_CACHE` | not set by the workflow | A runner-provided cache path could be unwritable for the egress uid |
 | Model or thinking overrides | **no** | They are configuration, not environment (`.agent/config.yml`), so they are reviewable |
 | `PI_*` session markers | injected by Pi | Used for diagnostics only |
 
@@ -161,9 +214,11 @@ Rules:
   Because `abort` continues any queued steering or follow-up messages, the orchestrator asserts through
   `get_state` that both queues are empty before aborting; the contract never queues `steer` or
   `follow_up`, so a non-empty queue is a defect signal that fails the run.
-- Shutdown is ordered: close stdin, wait for exit with a bounded grace period, then kill. A nonzero
-  exit whose stop reason is `error` or `aborted` fails the run; a `length` stop reason fails it with
-  `agent-error`.
+- Shutdown is ordered: close stdin, wait for exit with a bounded grace period, then kill the whole
+  process group (Pi is spawned as its group leader) and reap any remaining process owned by the egress
+  uid. The group is reaped before diff collection, so a background process the agent started cannot keep
+  editing the workspace. A nonzero exit whose stop reason is `error` or `aborted` fails the run; a
+  `length` stop reason fails it with `agent-error`.
 - The session file written under `--session-dir` is cached after the job with key
   `pi-session-<issue>-<fingerprint>` (`contracts/config.md` §Rules 5); missing cache is not an error and
   falls back to the thread digest.
@@ -172,6 +227,10 @@ Rules:
 
 | Condition | Reported failure enum |
 |-----------|----------------------|
+| Pi entry not resolvable, outside `<repoRoot>/node_modules`, or version differs from the exact pin | `environment` — no model call, `agent:ack` reports no version |
+| `AGENT_EGRESS_UID` is set but the orchestrator is not uid 0 | `environment` — the job did not use the documented privilege handoff |
+| Spawn as the egress uid fails (`EPERM`, `ENOENT`) | `environment` |
+| Preflight probe can read or write `GIT_DIR`, finds a `.git` in the work tree, writes under `node_modules/`, or cannot write the work tree as the egress uid | `environment` |
 | No response to the first prompt within the start deadline | `environment` |
 | `agent_settled` with `aborted` after a halt | `halted` (state), not a failure |
 | Provider error / auth failure | `environment` |

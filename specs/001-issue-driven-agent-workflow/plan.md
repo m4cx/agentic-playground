@@ -4,6 +4,9 @@
 
 **Input**: Feature specification from `/specs/001-issue-driven-agent-workflow/spec.md`
 
+**Amendment**: 2026-10-27 — Pi runtime provisioning in GitHub Actions; see
+[§Amendment 2026-10-27](#amendment-2026-10-27-pi-runtime-provisioning-in-github-actions).
+
 **Additional input (this planning round)**: the remote agent must run on the Pi harness
 (`pi.dev`, `@earendil-works/pi-coding-agent`), the same harness used locally.
 
@@ -29,7 +32,9 @@ main line can only change through a reviewed pull request.
 behaviour in Markdown instructions.
 
 **Primary Dependencies**: `@earendil-works/pi-coding-agent` pinned to the exact version used locally
-(1.4.0), consumed through its documented RPC wire protocol. The repository's own Spec Kit prompt
+(1.4.0), consumed through its documented RPC wire protocol. The executable is resolved from the
+installed package under `node_modules/` and launched with the running Node binary; `PATH` and any
+globally installed `pi` are never consulted (amendment 2026-10-27, research D16). The repository's own Spec Kit prompt
 templates are loaded as Pi prompt templates from an explicit allowlist, so a feature-sized issue can
 be worked with this repository's `specify` → `plan` → `tasks` workflow. Development dependencies are
 `typescript` and `@types/node` only. No other runtime dependencies: GitHub access uses the Node
@@ -62,8 +67,10 @@ end to end within 10 minutes (SC-001); one run per issue at a time (FR-013).
 
 **Constraints**: TypeScript `strict` mode, no implicit `any`, no `@ts-ignore` (an unavoidable
 suppression carries a comment naming the reason); `dist/` is build output and is never committed; the
-workflow installs and builds before the agent starts, cached with `setup-node`. Pi version and model ID
-pinned in `.agent/config.yml` (`contracts/config.md` is the single configuration schema); per-issue
+workflow installs and builds before the agent starts, cached with `setup-node`. The model ID is pinned
+in `.agent/config.yml` (`contracts/config.md` is the single configuration schema); the Pi version has
+one home, the exact dependency pin in `package.json` plus `package-lock.json`, which the orchestrator
+asserts against the installed package before the first model call (research D16); per-issue
 consumption limit with a soft warning and a hard stop
 (FR-017); hard job timeout well below the platform's 6-hour ceiling; the orchestrator alone holds
 `issues: write`, `contents: write`, and `pull_requests: write`; Pi never receives a repository
@@ -154,6 +161,8 @@ src/agent/
 ├── directive-report.ts       # Parses the agent-ignored: block, renders the agent:notice message
 ├── session-accounting.ts     # Per-session consumption records and the per-issue sum
 ├── budget.ts                 # Consumption accounting, soft warning, hard stop
+├── pi-runtime.ts             # Resolves the pinned Pi executable and version from node_modules,
+│                             # asserts the pin, and builds the unprivileged child environment
 ├── pi-session.ts             # Pi RPC lifecycle: start, prompt, observe, abort at boundary
 ├── halt-watch.ts             # Polls the thread for commands while a run is active
 ├── reconcile.ts              # Sweep: interrupted runs, half-applied label changes
@@ -180,9 +189,11 @@ tests/
 │   ├── templates.test.ts       # Allowlist only; missing path fails before any model call
 │   ├── directive-report.test.ts # none / list / missing / unparsable block handling
 │   ├── session-accounting.test.ts # per-session records, issue total, cache loss does not reset
+│   ├── pi-runtime.test.ts      # Bare PATH, exact-version assertion, entry outside node_modules
 │   └── reconcile.test.ts       # Interrupted runs resolve; half-applied labels repaired
 └── integration/
     ├── run-lifecycle.test.ts   # Trigger → ack → run → result, against the stub
+    ├── pi-launch.test.ts       # Spawn shape: node + resolved entry, no PATH/global binary
     ├── halt-boundary.test.ts   # Halt honoured at the next action boundary
     ├── budget-stop.test.ts     # Limit reached → stop → explicit decision required
     ├── retry-signal.test.ts    # Any retry signal aborts and fails with unexpected-retry
@@ -233,8 +244,8 @@ Full rationale and rejected alternatives are in [research.md](./research.md).
 8. **Credential hygiene in the workspace**: the checkout persists no credentials and the workspace git
    config holds no token, so the agent's shell has nothing to push with (research D10, layer c).
 9. **Continuity is configuration-bound**: the Pi session id and cache key include a fingerprint of the
-   instructions, model, thinking level, tool allowlist, and prompt templates, and each run asserts the
-   effective tools and model before the first prompt (research D5).
+   instructions, model, thinking level, tool allowlist, prompt templates, and the pinned Pi version, and
+   each run asserts the effective tools and model before the first prompt (research D5, D16).
 10. **Consumption is accounted per session**: each Pi session's cost is documented as its own
     `agent:session` message and the per-issue limit applies to their sum, so a lost cache cannot reset it
     (spec clarification).
@@ -250,6 +261,14 @@ Full rationale and rejected alternatives are in [research.md](./research.md).
 14. **Language is TypeScript**: strict TypeScript compiled with `tsc` to `dist/`, not plain JavaScript and
     not JSDoc-annotated JavaScript; tests are TypeScript too and run from the build output (research
     D15).
+15. **Pi is provisioned deterministically**: the orchestrator resolves the executable from the pinned
+    package under `node_modules/`, asserts the installed version against the exact dependency pin, and
+    launches it with the running Node binary. `PATH`, a globally installed `pi`, and an implicit
+    `npm install -g` are never used (research D16, amendment 2026-10-27).
+16. **Privilege handoff is explicit**: the job steps that can spawn Pi run the orchestrator with the
+    privilege needed to start Pi under the egress uid; the work tree is handed to that uid except
+    `.git`, which stays orchestrator-owned, and git runs with trust and hook protections (research
+    D17, amendment 2026-10-27).
 
 ## Decisions Carried From the Consistency Review
 
@@ -305,3 +324,180 @@ contracts are met where the plan's structure was not literally executable.
    implemented and covered by the automated suite except the end-to-end platform behaviour itself:
    ack latency, egress enforcement, halt through the Actions UI, job cancellation and reconciliation,
    and the 20-run/10-issue samples.
+
+## Amendment 2026-10-27: Pi runtime provisioning in GitHub Actions
+
+**Status**: Designed, not implemented. This amendment adds work to an otherwise implemented feature;
+`/speckit.tasks` must regenerate the task list for it before implementation.
+
+### Observed gap
+
+The reported symptom is that Pi is not available in the GitHub Actions context at all. Two independent
+blockers on the same launch path confirm it.
+
+**Blocker 1 — the executable is never provisioned.** Every workflow runs
+`npm ci --ignore-scripts && npm run build` and then `node dist/src/agent/main.js …`. `npm ci` installs
+`@earendil-works/pi-coding-agent` and creates `node_modules/.bin/pi`, but no step adds
+`node_modules/.bin` to `PATH`, installs Pi globally, or tells the orchestrator where the executable is.
+`PiSession` spawns the literal command `pi` (`src/agent/pi-session.ts`), so it depends on a binary on
+`PATH`. That works on a developer machine with a global install (here `/opt/homebrew/bin/pi`, 1.4.0) and
+fails on a clean runner.
+
+Verified locally on 2026-10-27:
+
+```text
+spawnSync("pi", …, {env: {PATH: "/usr/bin:/bin"}})            -> ENOENT
+node node_modules/@earendil-works/pi-coding-agent/dist/bundle/rpc-entry.js --version
+                                                              -> 1.4.0
+```
+
+**Blocker 2 — the launch cannot drop privileges.** The same path assumes the orchestrator can spawn Pi
+under `AGENT_EGRESS_UID` (`spawn(…, {uid})`) and `chown` the workspace, which requires effective uid 0.
+The `run` and `command` steps execute as the unprivileged `runner` user (only the egress step uses
+`sudo`), so even with Pi resolvable the spawn fails with `EPERM` and the run ends as `environment`.
+
+The existing sandbox-only tasks (T042, T053, T062, T068–T069, T080–T081, T083–T088) explain why neither
+blocker surfaced earlier: no end-to-end run ever executed on a hosted runner.
+
+### Decision D16 — resolve Pi from the pinned dependency, never from PATH
+
+The orchestrator resolves the package through Node's export map, derives the package root, reads
+`package.json#bin.pi`, and launches that file with `process.execPath`:
+
+```text
+piRuntime = {
+  nodePath: process.execPath,
+  entry:    <repoRoot>/node_modules/@earendil-works/pi-coding-agent/<bin.pi>,
+  version:  <installed version>
+}
+```
+
+Before the acknowledgement the orchestrator resolves this runtime and asserts, failing closed with
+`environment` (so a broken runtime produces an error comment, not a false acceptance):
+
+1. the package resolves from `<repoRoot>/node_modules/` and not from a parent or global location;
+2. `package.json#dependencies["@earendil-works/pi-coding-agent"]` is an **exact** version, not a range;
+3. the installed version and the version recorded in `package-lock.json` both equal that pin;
+4. the resolved entry exists, is a file, and is readable and executable by the egress uid.
+
+The resolved version — not a hardcoded constant — is what `agent:ack` reports. `--mode rpc` stays in the
+launch arguments because the CLI entry is used. This also removes the duplicated, drifting `"1.4.0"`
+literals in `main.ts` and `pi-session.ts`.
+
+The pinned Pi version also joins the configuration fingerprint (`contracts/config.md` Rule 5): an
+upgrade changes the session id and cache key, so a session written by an older Pi is never resumed by a
+newer one. The fingerprint uses the **locked** version, which `prepare` can read from
+`package-lock.json` without executing Pi; the run then asserts that the installed package equals it.
+
+**Rejected alternatives**: adding `node_modules/.bin` to `PATH` (works, but leaves version resolution
+implicit and lets a future runner image or global install shadow the pin); `npm install -g
+@earendil-works/pi-coding-agent@1.4.0` (a second, non-lockfile install on the critical path); the
+in-process SDK (collapses the credential boundary and makes Pi's environment the orchestrator's); the
+`rpc-entry` export (viable, but it implicitly forces `--mode rpc` and hides the documented CLI
+invocation the contract describes).
+
+### Decision D17 — explicit privilege handoff and workspace ownership
+
+The egress design (FR-034) requires a uid-scoped network policy, which in turn requires the
+orchestrator to be able to `setuid`. The job makes that privilege explicit instead of pretending an
+unprivileged process can drop privileges:
+
+- `agent-run.yml` and `agent-command.yml` execute the `run` / `command` mode through
+  `sudo --preserve-env=…`, invoking Node by absolute path so `sudo`'s `secure_path` cannot change the
+  interpreter. The preserved values are the non-secret ones the orchestrator needs
+  (`GITHUB_EVENT_PATH`, `GITHUB_EVENT_NAME`, `GITHUB_REPOSITORY`, `GITHUB_RUN_ID`, `GITHUB_WORKSPACE`,
+  `RUNNER_TEMP`, `AGENT_EGRESS_UID`, `AGENT_ENV_FILE`). Secrets do not travel through `sudo`'s
+  environment: the step writes a mode-`0600` file readable only by the runner and root, and the orchestrator reads it once and unlinks it before
+  spawning Pi. This avoids a dependency on the runner image granting `SETENV` for secret variables and
+  keeps the token out of any process argument list. `prepare`, `proposal`, and `sweep` stay
+  unprivileged: they never spawn Pi.
+- Before the acknowledgement, the orchestrator asserts that it is uid 0 when `AGENT_EGRESS_UID` is set.
+  If not, the run fails with `environment` and the thread names the missing handoff; it does not fall
+  back to running Pi as root.
+- The checkout's git directory is moved out of the work tree into a root-owned mode-`0700` `GIT_DIR`
+  under `RUNNER_TEMP`; the work tree contains no usable `.git`. The work tree is handed to the egress uid
+  recursively except `node_modules/`, which stays read-only. The agent can edit and create source files
+  but cannot reach hooks, config, objects, plant a replacement `.git`, or rewrite its own harness. A
+  preflight probe runs as the egress uid and must succeed on a work-tree write, fail to read or write
+  `GIT_DIR`, see no `.git` entry in the work tree, and fail to write under `node_modules/`. Ancestor
+  directories of `GITHUB_WORKSPACE` get an execute bit for other users when needed, so the egress uid can
+  traverse to the workspace without being able to list the runner's home.
+- Git runs with `--git-dir=<GIT_DIR> --work-tree=<repoRoot>`, `-c safe.directory=<repoRoot>`, and
+  `-c core.hooksPath=/dev/null`; commits also pass `--no-verify`. These are defense in depth: the git
+  directory is already outside the agent's reach. The push credential moves from the
+  `http.extraheader` command argument to `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_0` /
+  `GIT_CONFIG_VALUE_0` in the git child's environment, whose `/proc/<pid>/environ` is not readable by
+  the egress uid. The git config is asserted clean after the push, as before.
+- The child gets an explicit `HOME`, `TMPDIR`, and `XDG_CACHE_HOME` under the chowned session directory,
+  so Pi never needs `/home/agent-egress` (created with `--no-create-home`). `PATH` is passed only for
+  the agent's own `bash` tool; it contains no Pi entry.
+- Pi is spawned as a process-group leader and the whole group is killed at teardown **before** the diff
+  is collected. The orchestrator then reaps any process still owned by the egress uid (`pkill -KILL -u`),
+  so an agent-spawned process cannot keep editing the tree while the orchestrator commits, even if it
+  called `setsid` to leave the group.
+
+**Rejected alternatives**: running the orchestrator unprivileged and spawning a setuid helper (the
+helper would be root-owned, so the unprivileged orchestrator could not signal it for `abort`); applying
+egress to the runner uid and splitting GitHub access into a second job (breaks progress streaming and
+halt); unprivileged user namespaces (not guaranteed on `ubuntu-24.04` and not a stable platform
+contract); running Pi as the same uid as the orchestrator (the agent could read
+`/proc/<orchestrator>/environ`, where the repository token lives).
+
+### Job shape after the amendment
+
+```text
+checkout (persist-credentials: false)
+setup-node 22.19
+npm ci --ignore-scripts && npm run build
+prepare                                  # unprivileged, outputs cache key + allow hosts
+restore session cache
+write mode-0600 env file                 # secrets for the orchestrator, read once and unlinked
+sudo bash .github/scripts/agent-egress.sh  # creates agent-egress, applies uid policy
+sudo --preserve-env=… "$(command -v node)" dist/src/agent/main.js run|command
+  # orchestrator: move .git to root-owned GIT_DIR, chown work tree, preflight, then spawn Pi
+save session cache
+```
+
+### Files touched by this amendment
+
+| File | Change |
+|------|--------|
+| `src/agent/pi-runtime.ts` (new) | Resolve entry, package root, installed version; assert exact pin; build the child environment |
+| `src/agent/config.ts` | Include the pinned Pi version in the configuration fingerprint (`computeFingerprint`) |
+| `src/agent/pi-session.ts` | Take the resolved runtime instead of `pi`/`argPrefix`; spawn `nodePath + entry`; explicit `HOME`/`TMPDIR`; process-group teardown |
+| `src/agent/main.ts` | Read and unlink the mode-`0600` env file before spawning; resolve and preflight the runtime before the acknowledgement; pass the version to `agent:ack`; assert uid 0 when an egress uid is set |
+| `src/agent/workspace.ts` | Separate `GIT_DIR` outside the work tree, `--git-dir`/`--work-tree`, `safe.directory`, hooks disabled, credential via git environment; ensure ancestor traversal |
+| `.github/workflows/agent-run.yml`, `agent-command.yml` | Run the Pi-spawning mode through `sudo --preserve-env` with an absolute Node path; write the mode-`0600` secret file and pass only its path and non-secret values through `sudo` |
+| `.github/scripts/agent-egress.sh` | Publish the egress uid (already) and fail if the egress user cannot traverse the workspace |
+| `.agent/README.md` | State that the Pi version is pinned by `package.json`/`package-lock.json`, is not editable in `.agent/config.yml`, and participates in the fingerprint |
+| `tests/unit/pi-runtime.test.ts` (new) | Bare `PATH`, exact-version assertion, entry outside `node_modules`, missing entry |
+| `tests/unit/config.test.ts` | Fingerprint changes when the pinned Pi version changes |
+| `tests/integration/pi-launch.test.ts` (new) | Spawn shape is `node + resolved entry`, never a bare `pi`; no GitHub token in the child |
+| `tests/fake-github.ts` | Inject a stub runtime instead of `piCommand`/`argPrefix` |
+
+### Acceptance for the amendment
+
+| Check | Expected |
+|-------|----------|
+| No global `pi` and `PATH=/usr/bin:/bin` | The run still starts Pi from `node_modules/` (unit + integration test) |
+| Entry resolves outside `<repoRoot>/node_modules` | Run fails with `environment` before any model call |
+| Dependency is a range or installed version differs from the pin | Run fails with `environment`; `agent:ack` is not posted with a false version |
+| Workflow run/command step | The Pi child has uid `AGENT_EGRESS_UID`; the orchestrator has uid 0; the provider key is inherited, the GitHub token is not; the secret file is gone before Pi starts |
+| Egress uid reads or writes `GIT_DIR`, sees a `.git` entry in the work tree, or writes under `node_modules/` | Denied; preflight fails the run with `environment` |
+| Egress uid edits an existing tracked file and creates a new one | Allowed |
+| Agent-started background process | Killed with the process group, and any remaining process of the egress uid is reaped, before the diff is collected |
+| Push | Token appears in no argv; the git config stays clean; `git` succeeds on the agent-owned work tree with the separate git directory |
+| Pi pin changes | The configuration fingerprint and cache key change; no session written by the old version is resumed |
+
+### Constitution check for the amendment
+
+The amendment adds no non-English content and no new artifact class: it changes how an existing
+English-documented component is provisioned and privileged. It strengthens, rather than relaxes, the
+credential-separation guarantee that the main Constitution Check records as a pass. No deviation is
+declared, so Complexity Tracking stays empty.
+
+### Out of scope for this amendment
+
+Full syscall/filesystem sandboxing (seccomp, PID or mount namespaces) and a container-based runner are
+not introduced. The process-group teardown, the uid-wide reap, and the git-directory separation close
+the concrete paths this feature opens; a general sandbox is a separate change.

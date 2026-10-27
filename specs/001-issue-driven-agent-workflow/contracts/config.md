@@ -20,9 +20,11 @@ other document without adding it here is a contract violation.
 4. **Secrets are not configuration**: no key in this file may hold a credential. The provider API key is
    the only secret the agent job exposes, and it comes from repository secrets (FR-021). The model and
    thinking level are configuration, not secrets, so they are reviewable.
-5. **Fingerprint**: the values of `model`, `thinking`, `tools`, and `promptTemplates` plus the hash of
-   `.agent/instructions.md` form the run's configuration fingerprint. It is recorded per run and used
-   in the session-continuity key (`contracts/pi-rpc.md` §"Continuity").
+5. **Fingerprint**: the values of `model`, `thinking`, `tools`, and `promptTemplates`, the hash of
+   `.agent/instructions.md`, and the pinned Pi version (from `package-lock.json`) form the run's
+   configuration fingerprint. It is recorded per run and used in the session-continuity key
+   (`contracts/pi-rpc.md` §"Continuity"). Including the Pi version means an upgrade starts a fresh
+   session instead of resuming one written by an older Pi.
 6. **Session accounting**: consumption is recorded per session (`agent:session`) and the per-issue limit
    applies to their sum (`contracts/pi-rpc.md` §"Session accounting"). Configuration does not restate
    that rule; it only supplies the limit.
@@ -33,6 +35,11 @@ other document without adding it here is a contract violation.
 8. **Sweep window**: `sweep.graceMinutes` is the only definition of "stuck". The reconciler uses it
    directly; a run that legitimately exceeds it is indistinguishable from a dead one, so it must be
    comfortably larger than `limits.maxWallClockMinutes`.
+9. **Pi runtime version is not a config key**: the Pi version has exactly one home, the exact
+   dependency pin in `package.json` plus `package-lock.json`. The orchestrator resolves the installed
+   package, asserts the installed and locked versions equal the pin, and records the resolved version
+   in `agent:ack` (`contracts/pi-rpc.md` §"Runtime preconditions", research D16). Duplicating it here
+   would create a second value that can disagree with what `npm ci` actually installed.
 
 ## Schema
 
@@ -63,6 +70,8 @@ other document without adding it here is a contract violation.
 |-------|--------|--------|
 | Provider API key | repository secret, injected into Pi's environment only | the only credential Pi needs |
 | `GITHUB_TOKEN` | workflow job, orchestrator process only, never exported to Pi | FR-021, research D10 |
+| Pi executable and version | resolved from `node_modules/` using the package export map; asserted against the exact pin | Not from `PATH`, not from a global install (research D16) |
+| Orchestrator privilege | the workflow's explicit `sudo` handoff on Pi-spawning modes | Required to start Pi under the egress uid (research D17) |
 | Everything behaviour-related | `.agent/config.yml` + `.agent/instructions.md` | one reviewable surface (research D3) |
 
 There is deliberately **no** environment variable that overrides `model`, `thinking`, `tools`, or
@@ -78,5 +87,6 @@ here as a key with a stated precedence, not as an undocumented environment varia
 | `promptTemplates` contains a path outside the repository | validation fails |
 | `limits.warnAtRatio` is `0` or `1` | validation fails |
 | `tools` includes an unknown name | validation fails |
+| The Pi dependency is a range, or the installed version differs from the pin | the run fails with `environment` before any model call (this is a runtime precondition, not config validation) |
 | `labels.request` collides with a state label | validation fails |
 | File is missing or unparsable | run fails with `environment`; the thread names the file, not a stack trace |

@@ -4,7 +4,8 @@
 
 All unknowns from the Technical Context are resolved below. Each entry states the decision, why it
 was chosen, and what was rejected. Sources are the installed Pi 1.4.0 documentation under
-`/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/docs/` and the feature spec.
+`/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/docs/`, the feature spec, and local
+verification of the packaged entry points on 2026-10-27.
 
 ---
 
@@ -141,7 +142,9 @@ thread remains the record (per the spec's clarification), the session is an opti
 sections and the tool declarations inside the session file, so a resumed session can replay an older
 instruction file and an older tool allowlist. The fingerprint covers the instructions hash, `model`,
 `thinking`, `tools`, and `promptTemplates`; it is part of the session id and the cache key, and a run
-asserts the effective tool list and model through `get_state` before the first prompt. Without this,
+asserts the effective tool list and model through `get_state` before the first prompt. The pinned Pi
+version was added to the same fingerprint by the 2026-10-27 amendment (D16), so a harness upgrade also
+starts a fresh session. Without this,
 FR-014 ("apply the currently committed version to new work only") would be violated by the very
 mechanism that provides continuity (finding F7 in `consistency-and-decision-review.md`).
 
@@ -452,6 +455,94 @@ against the documented shapes instead of being parsed by hand into `unknown`.
   strict build is the more predictable contract for an unattended job.
 - *TypeScript with a bundler (esbuild, tsup)*: convenient single-file output, but adds a dependency and a
   second build configuration for a project of roughly twenty small modules. `tsc` is enough.
+
+## D16 — Pi runtime provisioning (added 2026-10-27)
+
+**Decision**: Resolve the Pi executable from the pinned dependency and launch it with
+`process.execPath`. Specifically: resolve `@earendil-works/pi-coding-agent` through the ESM export map,
+walk from the resolved module to the nearest `package.json`, read `bin.pi`, and execute that file with
+the currently running Node binary. Assert before the first model call that the entry lives under
+`<repoRoot>/node_modules/`, that the dependency spec is exact, that the installed version and the
+`package-lock.json` version equal that spec, and that the entry is a readable, executable file. Pass the
+resolved version to `agent:ack`; never hardcode it.
+
+**Rationale**: The reported symptom — Pi is not available in GitHub Actions — is structural, not a
+missing line in one workflow. `npm ci` creates `node_modules/.bin/pi`, but nothing puts that directory
+on `PATH`, and the orchestrator spawns the bare word `pi`. That resolves on a developer machine with a
+global install and fails on a clean runner with `ENOENT`. Resolving the package explicitly removes
+`PATH`, the shell shebang, and the runner image from the equation; the version comes from the same
+lockfile that `npm ci` consumed, so the running agent and the reviewed dependency cannot disagree.
+Keeping `--mode rpc` in the arguments means the documented CLI invocation in `contracts/pi-rpc.md`
+stays accurate. The same version is folded into the configuration fingerprint, so a Pi upgrade starts a
+fresh session instead of resuming a session file written by an older harness.
+
+Verified on 2026-10-27: with `PATH=/usr/bin:/bin`, `spawnSync("pi")` returns `ENOENT`, while
+`node …/dist/bundle/rpc-entry.js --version` and `node …/dist/bundle/cli.js --version` both print
+`1.4.0`. `npm install --ignore-scripts` still creates the `.bin/pi` symlink and the bundled CLI runs,
+so the existing install step needs no change.
+
+**Alternatives considered**:
+
+- *Prepend `node_modules/.bin` to `PATH` in the workflow.* Minimal change, but the executable is then
+  resolved by name, can be shadowed by a global install or a future runner image, and the version is
+  not asserted at runtime. It also does not fix Blocker 2 (privilege handoff).
+- *Install Pi globally in a setup step.* A second install outside the lockfile on the critical path,
+  and two versions can coexist silently.
+- *Use the `@earendil-works/pi-coding-agent/rpc-entry` export.* Public and one line shorter, but it
+  hardcodes `--mode rpc`, so the launch contract would no longer show the documented command shape.
+  Viable fallback if `bin.pi` ever stops being available.
+- *Use the in-process SDK (`RpcClient`).* Removes the child process boundary, which is exactly the
+  boundary that keeps the repository credential out of the agent process.
+
+---
+
+## D17 — Privilege handoff and workspace ownership (added 2026-10-27)
+
+**Decision**: The job steps that can spawn Pi run the orchestrator through
+`sudo --preserve-env=…`, preserving only non-secret values and invoking Node by absolute path. Secrets
+travel in a mode-`0600` `AGENT_ENV_FILE` that root can read and the egress uid cannot; the orchestrator
+reads it once and unlinks it before spawning Pi. The orchestrator asserts uid 0 when
+`AGENT_EGRESS_UID` is set, then hands the work tree to the egress uid recursively, while the git
+directory is moved out of the work tree into a root-owned mode-`0700` `GIT_DIR` and `node_modules/` stays
+read-only. Ancestor directories are made traversable for the egress uid. Git runs with
+`--git-dir`/`--work-tree`, `safe.directory`, `core.hooksPath=/dev/null`, and `--no-verify`; the push
+token moves from argv to the git child's environment via `GIT_CONFIG_COUNT`. Pi is a process-group
+leader; the group and any remaining process of the egress uid are killed before the diff is collected.
+
+**Rationale**: The egress design needs `setuid`, which an unprivileged process cannot perform. The
+current workflow applies the iptables policy with `sudo` but then runs the orchestrator as `runner`, so
+`spawn(…, {uid: 1500})` fails with `EPERM` even after Pi is resolvable. Making the handoff explicit is
+the smallest change that keeps FR-034 and the credential separation intact. A `.git` directory left in
+the work tree is not enough: the egress uid owns the work-tree root, so it can delete or replace the
+entry even if the directory itself is mode `0700`, and a replacement could carry a malicious
+`core.fsmonitor` or hooks. Moving the git directory outside the work tree removes that path entirely;
+hooks-disabled and `safe.directory` are defense in depth. Using an environment-carried credential
+closes the leak path; the process group plus a uid-wide reap prevents an agent-started background
+process from editing the tree during commit, even after `setsid`. Passing the secrets in a
+root-readable file rather than through `sudo`'s environment avoids depending on the runner image's
+`SETENV` policy and keeps them out of every argument list.
+
+Verified constraints: the runner already grants passwordless `sudo`; `sudo` resets `PATH`, so Node
+must be absolute; the egress user has no home, so `HOME`/`TMPDIR`/`XDG_CACHE_HOME` must be provided;
+git's repository ownership check, hook execution, and `core.fsmonitor` are why the git directory is
+kept outside the work tree; `safe.directory` and `core.hooksPath=/dev/null` are defense in depth. The
+runner home is not guaranteed to be world-traversable.
+
+**Alternatives considered**:
+
+- *Run the orchestrator unprivileged and delegate spawning to a setuid helper.* Keeps the token out of
+  root, but the helper is root-owned, so the unprivileged orchestrator cannot signal it for `abort`;
+  forwarding signals from a root supervisor adds a new privileged IPC surface.
+- *Apply egress to the runner uid and split GitHub access into a second job.* Breaks progress
+  streaming, halt-at-boundary, and the single-writer thread rule.
+- *Unprivileged user namespaces (`unshare -n`).* Not a guaranteed capability on `ubuntu-24.04` runners
+  and fragile across image updates; fail-closed egress becomes best-effort.
+- *Run Pi as the orchestrator's uid.* Same uid means the agent can read
+  `/proc/<orchestrator>/environ` and obtain `GITHUB_TOKEN`.
+- *Keep the token in `http.extraheader` argv.* Visible in `/proc/<pid>/cmdline` to any local user,
+  including a surviving agent process; environment variables are owner-readable only.
+
+---
 
 ## Open items carried into Phase 1 (not clarifications, resolved here)
 

@@ -9,6 +9,11 @@ description: "Task list for the issue-driven agentic workflow"
 
 **Prerequisites**: `plan.md`, `spec.md`, `research.md`, `data-model.md`, `contracts/`, `quickstart.md`
 
+> **Note (2026-10-27)**: [`plan.md`](./plan.md) §"Amendment 2026-10-27" adds Pi runtime provisioning
+> and the privilege handoff. This task list predates that amendment and does not cover it; regenerate it
+> with `/speckit.tasks` before implementing the amendment. The fingerprint input list below is also
+> extended by that amendment with the pinned Pi version.
+
 **Tests**: Included. `plan.md` §Testing and `quickstart.md` require a specific test tree, and SC-014,
 SC-015 and the injection-resistance contract are only verifiable through those tests.
 
@@ -91,7 +96,7 @@ done.
       `.md`, `tools` subset of the known built-ins), and compute the configuration fingerprint from
       instructions content hash + `model` + `thinking` + `tools` + `promptTemplates`
 - [X] T010 [P] Write `tests/unit/config.test.ts`: schema failures (missing file, unknown key, bad
-      `warnAtRatio`, missing template path), and fingerprint changes for each of the five inputs
+      `warnAtRatio`, missing template path), and fingerprint changes for each fingerprint input
       (after T009)
 - [X] T011 Implement `src/agent/github.ts`: thin `fetch` client over the endpoints the feature uses
       (issue, comments, labels, timeline, review states, pull request create, pull request read, repo

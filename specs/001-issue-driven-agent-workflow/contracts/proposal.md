@@ -26,6 +26,30 @@ agent/<issue-number>-<slug>
 - Author identity is the workflow identity, not a maintainer. No `Co-authored-by` lines, no model
   attribution in the message (the thread carries provenance).
 
+## Workspace trust boundary
+
+The agent may change the work tree but must not gain control over the repository metadata the
+orchestrator later executes against. When Pi runs under the egress uid (research D17):
+
+- The work tree is owned by the egress uid, so `edit` and `write` can modify existing tracked files and
+  create new ones; `node_modules/` stays read-only, so the agent cannot rewrite its own harness.
+- The git directory is moved out of the work tree into a root-owned mode-`0700` `GIT_DIR`; the work tree
+  contains no usable `.git`. The egress uid cannot read or write hooks, config, objects, or replace the
+  entry, because the directory is outside its reach.
+- Git runs with `--git-dir=<GIT_DIR> --work-tree=<repoRoot>`, `-c safe.directory=<repoRoot>`, and
+  `-c core.hooksPath=/dev/null`; commits also pass `--no-verify`. These are defense in depth on top of
+  the directory separation.
+- The push credential is carried in the git child's environment
+  (`GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_0` / `GIT_CONFIG_VALUE_0`), never in `argv` and never in the git
+  config, because `/proc/<pid>/cmdline` is world-readable.
+- Pi is a process-group leader; the group and any remaining process of the egress uid are killed before
+  the diff is collected, so a background process started by the agent cannot edit the tree during
+  commit.
+
+A preflight probe as the egress uid must succeed on a work-tree write, fail to read or write `GIT_DIR`,
+find no `.git` entry in the work tree, and fail to write under `node_modules/`; otherwise the run fails
+with `environment` before the acknowledgement.
+
 ## Pull request
 
 | Field | Value |
@@ -72,6 +96,9 @@ change `approvalState`; the agent process cannot.
   automatically (US2 scenario 3).
 - **Redaction before commit** — file contents pass through `redact.ts`; a detected credential aborts
   the proposal, posts the failure enum `secret-request`, and commits nothing (FR-018).
+- **No agent-controlled git surface** — `.git` is outside the agent's writable tree, hooks are disabled,
+  and the push credential never appears in `argv` or `.git/config` (`contracts/pi-rpc.md` §"Privilege
+  handoff and workspace ownership").
 - **Conflict** — if the default branch moved such that the proposal cannot be created cleanly, the
   run fails with `content-conflict` and the thread names the diverging paths (edge case in spec).
 - **Bounded diff** — a diff larger than `config.yml#proposal.maxChangedPaths` or
