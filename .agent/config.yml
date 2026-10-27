@@ -1,0 +1,79 @@
+# Agent behaviour configuration.
+#
+# This file is the single schema for the agent's behaviour. Every value here is
+# reviewable repository content and applies to new runs only. `contracts/config.md`
+# in the feature specification is the authoritative description of every key.
+#
+# Fail closed: an unknown key, a missing key, or an out-of-range value fails the run
+# before any model call.
+
+# Exact model ID accepted by the pinned Pi version.
+model: "anthropic/claude-sonnet-4-5"
+
+# off | minimal | low | medium | high | xhigh | max
+thinking: "high"
+
+# Every tool the agent may use. No git or forge tool is ever allowed here:
+# repository authority belongs to the orchestrator, not to the agent process.
+tools:
+  - read
+  - bash
+  - edit
+  - write
+  - grep
+  - find
+  - ls
+
+# Explicit prompt-template allowlist, loaded with one --prompt-template per entry.
+# Discovery stays off, so the agent's slash-command vocabulary is exactly this list.
+promptTemplates:
+  - .pi/prompts/speckit.specify.md
+  - .pi/prompts/speckit.plan.md
+  - .pi/prompts/speckit.tasks.md
+
+# Standing instructions appended to the system prompt.
+instructionsPath: .agent/instructions.md
+
+# Label vocabulary (see contracts/labels.md).
+labels:
+  request: "agent:run"
+  queued: "agent:queued"
+  working: "agent:working"
+  waiting: "agent:waiting"
+  halted: "agent:halted"
+  finished: "agent:finished"
+  failed: "agent:failed"
+  rejected: "agent:rejected"
+  proposal: "agent:proposal"
+
+# The issue whose `/agent halt` stops all work in this repository.
+globalHaltIssue: 1
+
+# Per-issue consumption limits (FR-017).
+limits:
+  maxCostUsd: 5
+  warnAtRatio: 0.8
+  continueIncrementUsd: 2
+  maxTurns: 40
+  maxWallClockMinutes: 45
+  startDeadlineSeconds: 180
+
+# Bounds for a reviewable proposal.
+proposal:
+  maxChangedPaths: 20
+  maxDiffLines: 1500
+
+# Session continuity key prefix; the full key also carries the configuration
+# fingerprint, so a configuration change starts a fresh session.
+continuity:
+  sessionCacheKeyPrefix: pi-session
+
+# The only hosts the agent process may reach: the model provider, including the
+# endpoint it uses to authenticate. Nothing else.
+network:
+  allowHosts:
+    - api.anthropic.com
+
+# Reconciliation window. Must be comfortably larger than limits.maxWallClockMinutes.
+sweep:
+  graceMinutes: 90

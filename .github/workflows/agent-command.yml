@@ -1,0 +1,75 @@
+name: Agent command
+
+# Command words from the issue thread: halt, retry, continue, approve, reject,
+# status, help (FR-026). Nothing else in a comment is a decision.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: agent-issue-${{ github.event.issue.number || github.event.pull_request.number || inputs.issue }}
+  cancel-in-progress: false
+
+jobs:
+  command:
+    name: Agent command
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout default branch without credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.19"
+          cache: npm
+
+      - name: Install and build
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          npm run build
+
+      - name: Prepare run
+        id: prepare
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: node dist/src/agent/main.js prepare
+
+      - name: Restore Pi session cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/pi-sessions
+          key: ${{ steps.prepare.outputs.session_cache_key }}
+
+      - name: Apply agent egress restriction
+        env:
+          AGENT_ALLOW_HOSTS: ${{ steps.prepare.outputs.allow_hosts }}
+          AGENT_EGRESS_UID: "1500"
+        run: sudo --preserve-env=AGENT_ALLOW_HOSTS,AGENT_EGRESS_UID,GITHUB_ENV bash .github/scripts/agent-egress.sh
+
+      - name: Execute command
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: node dist/src/agent/main.js command
+
+      - name: Save Pi session cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/pi-sessions
+          key: ${{ steps.prepare.outputs.session_cache_key }}

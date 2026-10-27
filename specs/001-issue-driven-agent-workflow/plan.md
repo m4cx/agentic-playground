@@ -262,3 +262,46 @@ the platform queue visible. No open decision remains in this plan.
 
 > No constitution violations, so no entries. The table below is intentionally absent rather than
 > filled with justifications for choices that are not violations.
+
+## Implementation Notes (recorded after implementation)
+
+These notes satisfy T089: the code was compared against the design decisions above, and the
+divergences below are deliberate. Nothing here changes a requirement; each item records how the
+contracts are met where the plan's structure was not literally executable.
+
+1. **Entry point path.** `tsconfig.json` uses `rootDir: "."` (T002) so tests and sources share one
+   project, which puts the compiled entry point at `dist/src/agent/main.js`, not `dist/agent/main.js`.
+   The workflows use the actual path. `node --test dist/tests` is unchanged.
+2. **Effective-tool assertion.** Pi 1.4.0's documented `get_state` response exposes the model and the
+   message counters but not the effective tool list. `assertEffectiveState` therefore compares the
+   model always, and compares tools when the response carries them (`tools`, `toolNames`, or
+   `effectiveTools`); otherwise `--tools` — an exact replacement selection in Pi — is the authoritative
+   allowlist, and `tests/stub-pi.ts` exercises the comparison path. A mismatch fails the run with
+   `environment` exactly as the contract requires.
+3. **Egress enforcement is per-UID.** `.github/scripts/agent-egress.sh` installs the allowlist with
+   iptables owner matching for a dedicated unprivileged user, drops that user's IPv6 traffic, and
+   exports `AGENT_EGRESS_UID`. The orchestrator spawns Pi under that UID (chowning the workspace and
+   session directory first). This keeps the orchestrator's own GitHub access working while Pi reaches
+   only `network.allowHosts`. The script fails closed: an empty allowlist, an unresolvable host, or a
+   failure to apply the rules exits non-zero, and the run never reaches a model call.
+4. **`agent:session` is posted per run, per session.** Pi's session statistics are cumulative for a
+   session, and a session can span several jobs. The orchestrator records the *delta* against the
+   statistics observed at session start, keys the message on `sessionId + run id`, and states the
+   issue total as the sum of documented records. The accounting rule of the contract (per-issue limit
+   applies to the sum; a lost cache cannot reset it) is preserved exactly, and a resumed session is
+   not double counted.
+5. **Global halt.** A repository-wide halt is active while the issue named by `globalHaltIssue` rests
+   in `halted`. New work is refused with an explicit thread message while it is active, and a
+   `/agent continue` or `/agent retry` on that issue lifts it (recorded as a decision, state moves to
+   `waiting`). This is the smallest mechanism that is observable from the repository alone.
+6. **Dependency audit (T087).** `@earendil-works/pi-coding-agent` is pinned to exactly `1.4.0` and no
+   other runtime dependency was added. `npm audit` reports 45 low and 2 critical advisories, all inside
+   that pinned dependency tree (its own transitive packages, including `undici` and `cross-spawn`).
+   The version is fixed by the requirement to run on the harness used locally, so the finding is
+   recorded rather than "fixed" by an unplanned upgrade; revisiting the pin is an operator decision.
+7. **Remaining sandbox-only work.** Tasks T042, T053, T062, T068, T069, T080, T081, T083 (scenario
+   S11), T084 (20-run sample), T085 (forced long conversation), T086 (10 hostile issues), and T088
+   require a live sandbox repository with Actions enabled. Everything they validate is
+   implemented and covered by the automated suite except the end-to-end platform behaviour itself:
+   ack latency, egress enforcement, halt through the Actions UI, job cancellation and reconciliation,
+   and the 20-run/10-issue samples.

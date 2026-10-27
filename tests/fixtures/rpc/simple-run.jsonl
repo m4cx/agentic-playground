@@ -1,0 +1,7 @@
+{"type":"response","id":"cmd-1","command":"set_auto_retry","success":true}
+{"type":"response","id":"cmd-2","command":"set_auto_compaction","success":true}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"turn_end","message":{"role":"assistant","content":[]},"toolResults":[]}
+{"type":"agent_end","messages":[],"willRetry":false}
+{"type":"agent_settled","aborted":false}
