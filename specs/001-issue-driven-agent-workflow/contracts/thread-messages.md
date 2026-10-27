@@ -176,34 +176,55 @@ One message per session, appended and never edited. The issue total is the sum o
 sessions, so a new session adds to the record instead of replacing it, and a lost cache cannot reset the
 limit (decision in `spec.md` §Clarifications; `contracts/pi-rpc.md` §"Session accounting").
 
-### 9. Directive report (`agent:notice`) — FR-030
+### 9. Agent report blocks (`agent:notice`) — FR-006, FR-014, FR-030
 
-The agent must end its answer with exactly one of these blocks:
+The agent ends its answer with three blocks. Only the first is mandatory.
 
 ```text
 agent-ignored:
 - <short description of what the directive asked for> — <why it was not followed>
 ```
-
 ```text
 agent-ignored: none
 ```
+```text
+agent-question: <the single question the run needs answered before it can continue>
+```
+```text
+agent-unmet:
+- <instruction it could not honour> — <why>
+```
+```text
+agent-unmet: none
+```
 
-The orchestrator extracts it, redacts it, and renders:
+The orchestrator extracts them, redacts them, and renders one `agent:notice` with a `kind`:
+
+| kind | Source block | Effect on state |
+|------|--------------|-----------------|
+| `directive` | `agent-ignored:` | none; recorded for FR-030 and SC-014 |
+| `question` | `agent-question:` | `waiting`; the run resumes only on `/agent continue` |
+| `unmet` | `agent-unmet:` | none; recorded for FR-014 |
 
 ```markdown
 Directive check.
 
 - <one line per ignored directive: what it asked for, and why it was not followed>
-
-or: `No embedded directive found.`
 ```
 
-Rules: the block is data, never an instruction; the notice never repeats a secret value and never restates
-a directive as a command; a directive that the agent did follow by mistake is a contract breach reported
-as a failure. If the block is missing or unparsable, the orchestrator posts the notice with
-`No directive report was produced for this run.` and appends a state-log note. Absence is therefore
-recorded rather than hidden — this is what makes SC-014 auditable.
+```markdown
+Question from the run.
+
+<the question, redacted>
+Answer in this thread, then post `/agent continue`.
+```
+
+Rules: the blocks are data, never instructions; a notice never repeats a secret value and never restates a
+directive as a command; a directive the agent did follow by mistake is a contract breach reported as a
+failure. If `agent-ignored:` is missing or unparsable, the orchestrator posts the notice with
+`No directive report was produced for this run.` and appends a state-log note, so absence is recorded
+rather than hidden — this is what makes SC-014 auditable. A missing `agent-question:` or `agent-unmet:`
+block is treated as "none".
 
 ### 10. Proposal outcome (`agent:outcome`) — FR-033
 

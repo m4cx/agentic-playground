@@ -76,8 +76,8 @@ Expected: all tests pass, and specifically:
 2. Add the `agent:run` label; do not touch any local machine.
 3. Watch the issue.
 
-**Expected**: `agent:ack` comment within 2 minutes of the run starting and stating the trigger-to-start
-queue delay (SC-016); `agent:working` label; the status comment appears
+**Expected**: `agent:ack` comment within 2 minutes of the run starting and stating the queue delay
+(SC-016); `agent:working` label; the status comment appears
 once and gains an appended state row (never a second status comment) as the run progresses; within 10
 minutes an `agent:result` comment plus a
 pull request link; label becomes `agent:waiting`; the `agent:proposal` label on the PR.

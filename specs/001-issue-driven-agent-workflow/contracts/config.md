@@ -26,9 +26,13 @@ other document without adding it here is a contract violation.
 6. **Session accounting**: consumption is recorded per session (`agent:session`) and the per-issue limit
    applies to their sum (`contracts/pi-rpc.md` §"Session accounting"). Configuration does not restate
    that rule; it only supplies the limit.
-7. **Egress**: `network.allowHosts` is applied as an allowlist before Pi starts. An empty list, a host the
-   configured provider does not use, or a failure to apply the restriction fails the run with
-   `environment` and no model call happens (FR-034).
+7. **Egress**: `network.allowHosts` is applied as an allowlist before Pi starts. It must name every host
+   the provider needs (authentication and inference) and nothing else, so a token refresh cannot fail
+   while a foreign host stays reachable. An empty list, a missing provider host, or a failure to apply the
+   restriction fails the run with `environment` and no model call happens (FR-034).
+8. **Sweep window**: `sweep.graceMinutes` is the only definition of "stuck". The reconciler uses it
+   directly; a run that legitimately exceeds it is indistinguishable from a dead one, so it must be
+   comfortably larger than `limits.maxWallClockMinutes`.
 
 ## Schema
 
@@ -50,7 +54,8 @@ other document without adding it here is a contract violation.
 | `proposal.maxChangedPaths` | integer | yes | `> 0` | bounded diff (`contracts/proposal.md`) |
 | `proposal.maxDiffLines` | integer | yes | `> 0` | bounded diff (`contracts/proposal.md`) |
 | `continuity.sessionCacheKeyPrefix` | string | yes | `pi-session` | session cache key (research D5) |
-| `network.allowHosts` | list of host names | yes | must contain the model provider endpoint the configured model uses, and nothing else | egress restriction applied before Pi starts (FR-034) |
+| `network.allowHosts` | list of host names | yes | every host the configured provider needs for authentication **and** inference, and nothing else | egress restriction applied before Pi starts (FR-034) |
+| `sweep.graceMinutes` | integer | yes | `> 0`; how long an issue may hold `agent:working` before the reconciler treats it as interrupted | `src/agent/reconcile.ts` (invariant I5) |
 
 ## Relationship to the environment
 

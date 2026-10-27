@@ -180,7 +180,7 @@ from the state labels: it is the *request* to work, not a state.
 | V4 | FR-017 | Budget checked per boundary against the sum of documented sessions; hard stop posts the consumed amount and requires `continue` |
 | V5 | FR-016, FR-030 | Every message the orchestrator posts carries the run id, so the thread is self-describing |
 | V6 | FR-019, constitution I | All orchestrator-owned strings come from English templates in `messages.ts`; agent output is redacted, not translated |
-| V7 | FR-029, FR-030 | Tool allowlist excludes any forge or git mutation tool; the agent must end its answer with the `agent-ignored:` block, which the orchestrator parses and renders as an `agent:notice` message; a missing block is recorded as "report missing" in the thread |
+| V7 | FR-006, FR-014, FR-029, FR-030 | Tool allowlist excludes any forge or git mutation tool; the agent ends its answer with the report blocks — `agent-ignored:` (mandatory), `agent-question:`, `agent-unmet:` — which the orchestrator parses and renders as `agent:notice` with its kind; a missing `agent-ignored:` block is recorded as "report missing", a missing optional block as "none" |
 | V8 | FR-023 | Request version (body hash) compared at run start and at each boundary; a change triggers stop-and-restate |
 | V9 | FR-031 | Any retry signal from the harness (`auto_retry_*`, `summarization_retry_*`, `compaction_*`, `willRetry`) aborts the run and fails it with `unexpected-retry` |
 | V10 | FR-034 | The egress restriction is applied before Pi starts; if it cannot be applied, the run fails with `environment` and no model call happens |

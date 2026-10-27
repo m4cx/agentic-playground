@@ -50,8 +50,7 @@ only permitted translation (FR-010).
   thread by the orchestrator when it observes the proposal being closed.
 - **I4 — Acknowledgement precedes state**: `agent:queued` is set and the acknowledgement comment is
   posted before any model call, so the acknowledgement cannot be lost to a later run failure. SC-002 is
-  measured from the start of the run, and the trigger-to-start delay is printed in the acknowledgement
-  (SC-016).
+  measured from the start of the run, and the queue delay is printed in the acknowledgement (SC-016).
 - **I5 — Interrupted runs resolve**: a job that dies while holding `agent:working` is reconciled by the
   next observation of the issue (any event on it, or the scheduled sweep in `agent-sweep.yml`) to
   `failed` with reason `interrupted`. The sweep also repairs the one-state invariant if a previous

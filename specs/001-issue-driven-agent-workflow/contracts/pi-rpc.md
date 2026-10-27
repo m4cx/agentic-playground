@@ -74,7 +74,7 @@ The agent process runs with no outbound access except the model provider endpoin
 
 | Path | Allowed | Mechanism |
 |------|---------|-----------|
-| Model provider API | yes | the only host in the allowlist, taken from `network.allowHosts` (`contracts/config.md`) |
+| Model provider API and its authentication endpoint | yes | the only hosts in the allowlist, taken from `network.allowHosts`; a token refresh must not be blocked (`contracts/config.md`) |
 | Pi catalogue / update checks | no | `--offline` |
 | Repository API, package registries, anything else | no | job-level egress restriction applied before Pi starts; the orchestrator, not Pi, holds the repository credential |
 

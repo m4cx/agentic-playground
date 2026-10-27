@@ -4,7 +4,7 @@
 
 **Review date**: 2026-10-26
 
-**Constitution in force**: 2.0.0 (Principle I: English for all generated content; this document is
+**Constitution in force**: 2.0.0 at review time, 2.0.1 after the cleanup in §7 (Principle I: English for all generated content; this document is
 English for that reason, although the review request was made in German)
 
 **Scope reviewed**: `spec.md`, `plan.md`, `research.md`, `data-model.md`, `quickstart.md`,
@@ -713,7 +713,7 @@ them out:
 | F17 | Fixed | `plan.md` scale/scope, `labels.md` I6 |
 | F18 | Fixed | `contracts/config.md`, referenced everywhere; env overrides removed |
 | F19 | Fixed | `set_auto_compaction`, retry-signal detection, failure enum `unexpected-retry`, research D7 |
-| F20 | Fixed | SC-002 reworded to "within 2 minutes of the run starting", new SC-016 for the recorded trigger-to-start delay, acknowledgement template and `labels.md` I4 updated, research "Open items" updated |
+| F20 | Fixed | SC-002 reworded to "within 2 minutes of the run starting", new SC-016 for the recorded queue delay, acknowledgement template and `labels.md` I4 updated, research "Open items" updated |
 | F21 | Fixed | `research.md` D2, `pi-rpc.md` commands and stop sequence |
 | F22 | Fixed | `pi-rpc.md` `get_messages` row |
 | F23 | Fixed | `quickstart.md` test list and scenarios, `plan.md` test tree |
@@ -748,3 +748,29 @@ both cached; a build failure is `environment`, not an agent failure); the type c
 too, so tests cannot pass against code that no longer compiles; and `dist/` must stay out of commits,
 diffs, and proposals. The "no build step" advantage recorded for D9 in §4 is superseded by this
 revision.
+
+### Revision 5 — remaining analysis findings (maintainer approved)
+
+The `/speckit.analyze` pass left twelve findings below the top-five threshold. All were applied:
+
+| Finding | Resolution |
+|---|---|
+| G6 ambiguity had no path | New task **T040** plus `agent-question:` block → `agent:notice kind=question` → `waiting` (FR-006) |
+| G7 `maxTurns` / `maxWallClockMinutes` unenforced | Task T030 now stops on both and posts `agent:limit`; T032 asserts it |
+| G8 `agent:limit` had no posting task | Folded into T030 |
+| U1 sweep window undefined | New config key `sweep.graceMinutes` in `contracts/config.md`; T003 creates it, T058 uses it |
+| U2 second notice use undefined | `contracts/thread-messages.md` §9 now defines three report blocks and three notice kinds (`directive`, `question`, `unmet`); T026 parses them, T066 renders `unmet` |
+| U3 egress allowlist could block provider auth | `network.allowHosts` must cover authentication **and** inference; `pi-rpc.md` network table updated |
+| C1 stale constitution version in plan | `plan.md` now cites 2.0.1 |
+| D1 FR-011 duplicated FR-033 | Duplicate clause removed from FR-011; FR-011 points to FR-033 |
+| D2 T082/T089 overlapped | T082 owns orchestrator strings, T089 owns identifiers/comments/test names |
+| D3 T078/T083 overlapped | T083 refers to T080 for the egress half |
+| D4 T016 asserted redaction | T016 now checks that templates carry no literal credential; redaction stays in T017/T018 |
+| A1 "plain language" unmeasurable | FR-005 defines it as state, cause and next action; FR-012 and US3.3 reference that definition |
+| I1 label named four ways | New **Request Label** entity; FR-003/FR-026 use that term, contracts keep `agent:run` |
+| I2 "queue delay" vs "trigger-to-start delay" | `queue delay` everywhere; SC-016 defines it |
+| I3 traceability gaps | Rows added for SC-005/006/007/010/011/012/013 |
+
+Task count after this round: **90**. The task IDs were renumbered once more and every reference in
+Dependencies, the parallel examples, the strategy notes and the traceability table was remapped and
+verified.

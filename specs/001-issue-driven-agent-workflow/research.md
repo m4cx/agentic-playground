@@ -401,6 +401,12 @@ produced" rather than failing the run. That is deliberately the softer of the tw
 auditable either way, and failing every run whose model forgets a formatting rule would make the workflow
 unusable. A directive the agent actually followed is a contract breach and is treated as a failure.
 
+**Extended after the analysis pass**: the same mechanism carries two more reports, because FR-006
+(ambiguity) and FR-014 (instruction that cannot be honoured) have the same problem — the orchestrator
+cannot distinguish "silent" from "nothing to say". `agent-question:` drives the `waiting` state and
+`agent-unmet:` feeds the notice without changing state. Both are optional; only `agent-ignored:` is
+mandatory, so a model that forgets a block cannot stall a run.
+
 **Alternatives considered**: free prose (unverifiable), a dedicated tool (needs an extension, which D3
 forbids), post-hoc inspection of the model transcript (the orchestrator has no access to it).
 
@@ -453,7 +459,7 @@ against the documented shapes instead of being parsed by hand into `unknown`.
   only remove the same-issue serialization delay, not the platform's runner queue, which no in-Actions
   mechanism controls. The maintainer therefore chose to make the promise honest instead of adding a
   second writer: SC-002 is measured from the start of the run, and every acknowledgement prints the
-  trigger-to-start delay, which makes queue latency a visible, reviewable number (SC-016). This also means
+  queue delay, which makes queue latency a visible, reviewable number (SC-016). This also means
   the design does not need a second job that writes to the thread, and its idempotency marker stays
   single-owner.
 - **Rate limits**: the orchestrator treats a 403 with a rate-limit body as a retryable *orchestrator*

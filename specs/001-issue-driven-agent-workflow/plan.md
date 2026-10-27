@@ -57,7 +57,7 @@ contributor machine.
 that lives inside the repository it operates on.
 
 **Performance Goals**: acknowledgement comment within 2 minutes of the run starting (SC-002), with the
-trigger-to-start delay recorded per run (SC-016); halt honoured within 5 minutes (SC-009); small request
+queue delay recorded per run (SC-016); halt honoured within 5 minutes (SC-009); small request
 end to end within 10 minutes (SC-001); one run per issue at a time (FR-013).
 
 **Constraints**: TypeScript `strict` mode, no implicit `any`, no `@ts-ignore` (an unavoidable
@@ -78,7 +78,7 @@ issues are therefore possible and accepted.
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-Constitution version in force: **2.0.0**. Applicable principle: **I. English for All Generated
+Constitution version in force: **2.0.1**. Applicable principle: **I. English for All Generated
 Content**, plus the Additional Constraints (scope of "generated content", inbound content in other
 languages) and Development Workflow (review must verify the language standard, agents must apply it
 to everything they write).

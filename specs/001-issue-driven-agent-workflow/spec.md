@@ -81,7 +81,7 @@ A requester returns to an issue hours later and wants to know what happened. The
 
 1. **Given** work in progress on an issue, **When** the requester checks the issue, **Then** the current state is visible without asking a follow-up question.
 2. **Given** work that has ended, **When** the requester checks the issue, **Then** the state is either a terminal state (finished, failed, or rejected) or an explicit wait for a named human decision, and never "in progress".
-3. **Given** work that failed, **When** the requester reads the issue, **Then** the failure reason and whether a retry is sensible are stated in plain language.
+3. **Given** work that failed, **When** the requester reads the issue, **Then** the failure reason and whether a retry is sensible are stated in plain language (FR-005, FR-012).
 
 ---
 
@@ -141,16 +141,16 @@ A maintainer who notices unwanted behaviour can halt the agent using only the is
 
 - **FR-001**: The system MUST let a person request agent work on an issue purely through the issue itself, with no local installation, command line, or terminal step.
 - **FR-002**: The system MUST run all agent work outside the requester's machine, in an environment that is reachable and operating independently of any individual's workstation.
-- **FR-003**: The system MUST accept work only for issues that are explicitly marked for agent handling, so that ordinary conversation in the repository never silently consumes agent capacity.
+- **FR-003**: The system MUST accept work only for issues that carry the request label, so that ordinary conversation in the repository never silently consumes agent capacity.
 - **FR-004**: The system MUST acknowledge an accepted request in the issue thread before or while the work is performed.
-- **FR-005**: The system MUST report the outcome of every accepted request in the issue thread in plain language, including what was done and links to every artifact produced.
+- **FR-005**: The system MUST report the outcome of every accepted request in the issue thread in plain language — that is, naming the state reached, the cause of that state, and the next action a person can take — including what was done and links to every artifact produced.
 - **FR-006**: The system MUST perform work of the type described in the issue and MUST NOT redefine the request on its own; when the request is ambiguous it MUST ask in the thread and wait.
 - **FR-007**: The system MUST express every change to repository content as a reviewable proposal linked from the issue, and MUST NOT apply changes without an explicit human approval.
 - **FR-008**: The system MUST never merge, publish, or otherwise finalize repository changes on its own initiative.
 - **FR-009**: The system MUST record, in the issue thread, the identity of the person whose action started the work and of the person who approved or rejected its result.
 - **FR-010**: The system MUST expose the state of the work (accepted, in progress, waiting for decision, finished, failed, halted, rejected) in the issue thread at all times.
-- **FR-011**: The system MUST ensure that every run ends in a recorded end state, that no issue stays in the working or queued state without activity for 24 hours, and that a proposal which is closed always resolves its issue to a terminal state.
-- **FR-012**: The system MUST record a failure reason in the thread whenever work cannot be completed, distinguishing causes the requester can act on from causes they cannot.
+- **FR-011**: The system MUST ensure that every run ends in a recorded end state and that no issue stays in the working or queued state without activity for 24 hours. How a closed proposal resolves an issue is FR-033.
+- **FR-012**: The system MUST record a failure reason in the thread whenever work cannot be completed, in the same plain-language form as FR-005 (state, cause, next action), distinguishing causes the requester can act on from causes they cannot.
 - **FR-013**: The system MUST prevent two concurrent runs for the same issue.
 - **FR-014**: The system MUST honour documented standing instructions stored in the repository as the agent's behavioural configuration, and MUST apply the currently committed version to new work only.
 - **FR-015**: The system MUST accept a halt request from a permitted person in an issue thread, preventing any further action for that issue from starting, and MUST accept a repository-wide halt that blocks new work until lifted.
@@ -164,7 +164,7 @@ A maintainer who notices unwanted behaviour can halt the agent using only the is
 - **FR-023**: The system MUST stop acting on an issue whose request was modified or withdrawn after work started, and MUST restate the version of the request it acted on.
 - **FR-024**: The system MUST determine who is permitted to start, halt, and approve work from repository permissions: only people with write (push) access or higher are permitted, and actions by anyone else MUST be ignored with an explanation in the thread.
 - **FR-025**: The system MUST re-check a person's permission at the moment each decision is recorded, so that a person who loses write access after starting work can no longer halt or approve it.
-- **FR-026**: The system MUST start new work only in response to the repository label that marks an issue for agent handling, applied by a permitted person, and MUST accept only `retry` and `continue` as the further entry points that continue an existing recorded request. It MUST treat `halt`, `retry`, `continue`, `approve`, and `reject` as fixed command words posted by a permitted person, so that no consequential decision depends on the agent interpreting free text; `status` and `help` MAY exist as informational commands that never change state.
+- **FR-026**: The system MUST start new work only in response to the request label, applied by a permitted person, and MUST accept only `retry` and `continue` as the further entry points that continue an existing recorded request. It MUST treat `halt`, `retry`, `continue`, `approve`, and `reject` as fixed command words posted by a permitted person, so that no consequential decision depends on the agent interpreting free text; `status` and `help` MAY exist as informational commands that never change state.
 - **FR-027**: The system MUST NOT interrupt an action that is already in flight when a halt, retry, or continue command arrives; the command MUST take effect at the next action boundary.
 - **FR-028**: Before reporting an issue as halted or paused, the system MUST post feedback in the thread stating what was completed, what was left undone, and what state the work ended in, so a later run can resume without redoing finished steps.
 - **FR-029**: The system MUST treat all issue-thread content as data describing a request, not as instructions to itself, and MUST NOT follow embedded directives that exceed the stated request or that would relax the approval gate, the consumption limit, the permission rules, or the secrecy rules.
@@ -177,7 +177,8 @@ A maintainer who notices unwanted behaviour can halt the agent using only the is
 ### Key Entities *(include if feature involves data)*
 
 - **Work Request**: The task expressed by a person in an issue; carries the request text, the request version that was acted on, the requesting person, and the requested kind of outcome.
-- **Trigger**: The explicit signal in the repository that a work request should be handled; is either the agent-handling label, a retry command, or a continue command; has an origin (label, retry command, or continue command), an originating person, and a point in time.
+- **Request Label**: The repository label that marks an issue as one the agent should work on; named `agent:run` in the contracts. Applying it is the only way to start new work (FR-003, FR-026).
+- **Trigger**: The explicit signal in the repository that a work request should be handled; is either the request label, a retry command, or a continue command; has an origin (label, retry command, or continue command), an originating person, and a point in time.
 - **Run**: One attempt by the agent to fulfil a work request; has a state, start and end points in time, the instruction set version it used, the actions it took, its consumption, its outcome, and, when started by a retry command, the earlier run it continues.
 - **Action Boundary**: The point between two discrete steps of a run at which a pending command takes effect; no action is abandoned mid-execution at a boundary.
 - **Status Update**: The visible record of a run's state in the issue thread; has a state, a point in time, and the version of the request it refers to.
@@ -206,7 +207,7 @@ A maintainer who notices unwanted behaviour can halt the agent using only the is
 - **SC-013**: In 100% of halted runs, the following run resumes without repeating an already completed step, verified over the first 20 halts.
 - **SC-014**: In 100% of a test set of at least 10 issues that deliberately embed directives aimed at the agent, the agent performs only the stated request, relaxes none of the approval, consumption, permission, or secrecy rules, and names the ignored directive in the thread.
 - **SC-015**: Zero runs are started without an explicit trigger or retry command, verified by auditing the trigger origin of every run over a 30-day period.
-- **SC-016**: The delay between the trigger and the start of its run is recorded in the issue thread for 100% of runs, so that platform queueing is visible and reviewable instead of hiding inside the acknowledgement promise.
+- **SC-016**: The queue delay — the time between the trigger and the start of its run — is recorded in the issue thread for 100% of runs, so that platform queueing is visible and reviewable instead of hiding inside the acknowledgement promise.
 
 ## Assumptions
 
