@@ -25,7 +25,10 @@ are reviewable.
 ## What the fingerprint does
 
 The run's configuration fingerprint is a hash of the instructions content plus `model`, `thinking`,
-`tools`, and `promptTemplates`. It appears in the acknowledgement comment.
+`tools`, `promptTemplates`, and the pinned Pi version from `package-lock.json`. It appears in the
+acknowledgement. The Pi version is not a key in `.agent/config.yml`: it has one home, the exact
+dependency in `package.json` plus `package-lock.json`, and the orchestrator asserts the installed
+version against that pin before the acknowledgement.
 
 - The fingerprint is part of the Pi session id and of the session cache key, so a configuration change
   starts a cold session instead of resuming one that was produced under different rules.
@@ -36,9 +39,9 @@ The run's configuration fingerprint is a hash of the instructions content plus `
   a subset of the configured allowlist and that the model matches. A mismatch fails the run with
   `environment` instead of running under old rules.
 
-Because of this, a change to any of those five inputs shows up as a different fingerprint in the
-acknowledgement, and the run that follows starts a new conversation while keeping the issue's
-documented consumption total intact (each session posts its own `agent:session` comment).
+Because of this, a change to any of those inputs — including a Pi upgrade — shows up as a different
+fingerprint in the acknowledgement, and the run that follows starts a new conversation while keeping the
+issue's documented consumption total intact (each session posts its own `agent:session` comment).
 
 ## What must never change here
 
@@ -49,5 +52,8 @@ documented consumption total intact (each session posts its own `agent:session` 
 - `promptTemplates` entries must be repository-relative `.md` files that exist on the default branch.
   The list is an allowlist, not a glob; an empty list is valid and means the agent has no slash
   commands at all.
+- The Pi version is pinned by the exact dependency in `package.json`/`package-lock.json`. Do not add a
+  `piVersion` key here; the orchestrator resolves the package from `node_modules/`, asserts the pin,
+  and never uses a globally installed `pi`.
 - `sweep.graceMinutes` must stay comfortably larger than `limits.maxWallClockMinutes`, otherwise a
   healthy long run is indistinguishable from a dead one.

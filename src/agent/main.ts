@@ -13,6 +13,7 @@
 
 import { execFile } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { Budget } from "./budget.js";
@@ -62,6 +63,15 @@ import {
 } from "./messages.js";
 import { PermissionGate, permissionDenialMessage } from "./permissions.js";
 import {
+  AGENT_ENV_KEYS,
+  assertOrchestratorPrivilege,
+  egressUidFromEnvironment,
+  PiRuntimeError,
+  readAgentEnvFile,
+  resolvePiRuntime,
+  type PiRuntime,
+} from "./pi-runtime.js";
+import {
   PiSession,
   PiSessionError,
   sessionCachePresent,
@@ -82,9 +92,13 @@ import { parseStatusComment, StateLog } from "./state-log.js";
 import { markerOf, Thread } from "./thread.js";
 import {
   commitMessage,
+  prepareAgentWorkspace,
+  restoreSessionOwnership,
   Workspace,
   WorkspaceError,
   type GitRunner,
+  type PreparedWorkspace,
+  type PrepareWorkspaceOptions,
   type WorkspaceOptions,
 } from "./workspace.js";
 
@@ -122,10 +136,13 @@ export interface OrchestratorOptions {
   workspaceFactory?: (options: WorkspaceOptions) => Workspace;
   gitRunner?: GitRunner;
   headSha?: () => Promise<string>;
-  piVersion?: string;
   dryRun?: boolean;
-  argPrefix?: readonly string[];
-  piCommand?: string;
+  /** Resolved runtime; tests inject a stub, production resolves from the pin. */
+  piRuntime?: PiRuntime;
+  /** Test seam for the privileged workspace preparation. */
+  prepareWorkspace?: (options: PrepareWorkspaceOptions) => Promise<PreparedWorkspace> | PreparedWorkspace;
+  /** Test seam for the uid check. */
+  getuid?: () => number | undefined;
 }
 
 export type RunStatus =
@@ -294,6 +311,9 @@ export function classifyFailure(error: unknown): { reason: FailureReason; detail
   if (error instanceof ConfigError) {
     return { reason: "environment", detail: error.message };
   }
+  if (error instanceof PiRuntimeError) {
+    return { reason: "environment", detail: error.message };
+  }
   if (error instanceof GitHubError) {
     return { reason: "environment", detail: error.message };
   }
@@ -319,6 +339,8 @@ export class Orchestrator {
   private readonly now: () => Date;
   private readonly log: (line: string) => void;
   private readonly secrets: string[];
+  private gitDir: string | null = null;
+  private sessionOwner: { uid: number; gid: number } | null = null;
 
   constructor(options: OrchestratorOptions) {
     this.options = options;
@@ -354,8 +376,12 @@ export class Orchestrator {
 
   private async headSha(): Promise<string> {
     if (this.options.headSha !== undefined) return this.options.headSha();
+    const args =
+      this.gitDir === null
+        ? ["rev-parse", "--short", "HEAD"]
+        : ["--git-dir", this.gitDir, "--work-tree", this.options.repoRoot, "rev-parse", "--short", "HEAD"];
     return new Promise<string>((resolve) => {
-      execFile("git", ["rev-parse", "--short", "HEAD"], { cwd: this.options.repoRoot }, (error, stdout) => {
+      execFile("git", args, { cwd: this.options.repoRoot }, (error, stdout) => {
         resolve(error === null ? stdout.trim() || "unknown" : "unknown");
       });
     });
@@ -527,6 +553,34 @@ export class Orchestrator {
       cachePresent: false,
     };
 
+    // The runtime must be resolvable and the workspace boundary must hold before
+    // the acknowledgement: a broken environment gets an error, not a false acceptance.
+    let runtime: PiRuntime;
+    try {
+      runtime = this.options.piRuntime ?? resolvePiRuntime(this.options.repoRoot);
+      const egressUid = egressUidFromEnvironment(this.options.environment ?? process.env);
+      assertOrchestratorPrivilege(egressUid, this.options.getuid ?? (() => process.getuid?.()));
+      if (egressUid !== undefined) {
+        const prepare = this.options.prepareWorkspace ?? prepareAgentWorkspace;
+        const owner = sudoOwner(this.options.environment ?? process.env);
+        const prepared = await prepare({
+          repoRoot: this.options.repoRoot,
+          runTemp: this.options.environment?.["RUNNER_TEMP"] ?? dirname(this.options.sessionDir),
+          sessionDir: this.options.sessionDir,
+          egressUid,
+          runtime,
+          ...(owner.uid === undefined ? {} : { cacheOwnerUid: owner.uid }),
+          ...(owner.gid === undefined ? {} : { cacheOwnerGid: owner.gid }),
+        });
+        this.gitDir = prepared.gitDir;
+        this.sessionOwner = { uid: prepared.sessionOwnerUid, gid: prepared.sessionOwnerGid };
+      }
+    } catch (error) {
+      return this.failRun(run, error);
+    }
+
+    this.log(`pi-runtime: node=${runtime.nodePath} entry=${runtime.entry} version=${runtime.version}`);
+
     // I4: queued label and acknowledgement before any model call.
     run.presentLabels = await this.applyState(issueNumber, run.presentLabels, "queued");
     run.log.append({
@@ -556,7 +610,7 @@ export class Orchestrator {
           instructionsSha,
           fingerprint: shortHash(this.loaded.fingerprint),
           model: this.config.model,
-          piVersion: this.options.piVersion ?? "1.4.0",
+          piVersion: runtime.version,
           thinking: this.config.thinking,
           capUsd: budget.capUsd,
           priorConsumptionUsd: accounting.totalCostUsd,
@@ -578,7 +632,12 @@ export class Orchestrator {
     });
     await this.publishStatus(run, "working");
 
-    const session = this.createSession(run);
+    let session: PiSession;
+    try {
+      session = this.createSession(run, runtime);
+    } catch (error) {
+      return this.failRun(run, error);
+    }
     run.session = session;
     run.cachePresent = sessionCachePresent(this.options.sessionDir, session.currentSessionId);
 
@@ -652,26 +711,26 @@ export class Orchestrator {
       };
     } finally {
       await run.session?.dispose();
+      if (this.sessionOwner !== null && process.getuid?.() === 0) {
+        restoreSessionOwnership(this.options.sessionDir, this.sessionOwner.uid, this.sessionOwner.gid);
+      }
     }
   }
 
-  private createSession(run: ActiveRun): PiSession {
+  private createSession(run: ActiveRun, runtime: PiRuntime): PiSession {
     const factory =
       this.options.piFactory ??
       ((sessionOptions: PiSessionOptions) => new PiSession(sessionOptions));
-    const egressUidRaw = this.options.environment?.["AGENT_EGRESS_UID"];
-    const egressUid = egressUidRaw === undefined ? undefined : Number.parseInt(egressUidRaw, 10);
+    const egressUid = egressUidFromEnvironment(this.options.environment ?? process.env);
     const sessionOptions: PiSessionOptions = {
       config: this.config,
       repoRoot: this.options.repoRoot,
       issueNumber: run.trigger.issueNumber,
       fingerprint: this.loaded.fingerprint,
       sessionDir: this.options.sessionDir,
-      ...(this.options.piVersion === undefined ? {} : { piVersion: this.options.piVersion }),
-      ...(this.options.piCommand === undefined ? {} : { piCommand: this.options.piCommand }),
-      ...(this.options.argPrefix === undefined ? {} : { argPrefix: this.options.argPrefix }),
+      runtime,
       ...(this.options.environment === undefined ? {} : { env: this.options.environment }),
-      ...(egressUid === undefined || Number.isNaN(egressUid) ? {} : { egressUid }),
+      ...(egressUid === undefined ? {} : { egressUid }),
       coldStart: !sessionCachePresent(
         this.options.sessionDir,
         sessionIdFor(run.trigger.issueNumber, this.loaded.fingerprint),
@@ -681,6 +740,32 @@ export class Orchestrator {
       },
     };
     return factory(sessionOptions);
+  }
+
+  /** A runtime, workspace, or session-start failure: report it instead of losing the run. */
+  private async failRun(run: ActiveRun, error: unknown): Promise<RunResult> {
+    const failure = classifyFailure(error);
+    const thread = this.threadFor(run.trigger.issueNumber);
+    await thread.read();
+    await thread.postOnce(
+      "error",
+      this.options.runId,
+      this.text(
+        renderError({
+          issueNumber: run.trigger.issueNumber,
+          runId: this.options.runId,
+          reason: failure.reason,
+          detail: failure.detail === undefined ? "" : this.text(failure.detail),
+          consumedUsd: run.consumedUsd,
+          ...(failure.signal === undefined ? {} : { signal: failure.signal }),
+        }),
+      ),
+    );
+    await this.transition(run, "failed", "read the failure reason");
+    if (this.sessionOwner !== null && process.getuid?.() === 0) {
+      restoreSessionOwnership(this.options.sessionDir, this.sessionOwner.uid, this.sessionOwner.gid);
+    }
+    return { status: "failed", runId: this.options.runId, failureReason: failure.reason };
   }
 
   /** An action boundary: commands, request version, budget, and progress. */
@@ -996,6 +1081,7 @@ export class Orchestrator {
       issueNumber: this.currentIssueNumber,
       proposal: this.config.proposal,
       secrets: this.secrets,
+      ...(this.gitDir === null ? {} : { gitDir: this.gitDir }),
       ...(this.options.gitRunner === undefined ? {} : { runGit: this.options.gitRunner }),
     });
   }
@@ -1519,9 +1605,42 @@ function makeClient(env: NodeJS.ProcessEnv): GitHubClient {
   return new GitHubClient({ token, repository });
 }
 
+/**
+ * Read the mode-0600 secrets file once and remove it. The file is written by the
+ * privileged workflow step; it never travels through sudo's environment and never
+ * reaches the Pi child.
+ */
+function sudoOwner(env: NodeJS.ProcessEnv): { uid?: number; gid?: number } {
+  const parse = (value: string | undefined): number | undefined => {
+    if (value === undefined || !/^\d+$/.test(value)) return undefined;
+    return Number.parseInt(value, 10);
+  };
+  return {
+    uid: parse(env["AGENT_CACHE_OWNER_UID"]) ?? parse(env["SUDO_UID"]),
+    gid: parse(env["AGENT_CACHE_OWNER_GID"]) ?? parse(env["SUDO_GID"]),
+  };
+}
+
+function withAgentSecrets(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const path = env["AGENT_ENV_FILE"];
+  if (path === undefined || path.length === 0) {
+    if (env["AGENT_EGRESS_UID"] !== undefined) {
+      throw new PiRuntimeError("AGENT_ENV_FILE is required when AGENT_EGRESS_UID is set");
+    }
+    return env;
+  }
+  const secrets = readAgentEnvFile(path);
+  for (const key of AGENT_ENV_KEYS) {
+    if (secrets[key] === undefined || secrets[key].length === 0) {
+      throw new PiRuntimeError(`AGENT_ENV_FILE is missing a value for ${key}`);
+    }
+  }
+  return { ...env, ...secrets };
+}
+
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<number> {
   const mode = argv[0] ?? "prepare";
-  const env = process.env;
+  let env = process.env;
   const repoRoot = env["GITHUB_WORKSPACE"] ?? process.cwd();
   const runId = env["GITHUB_RUN_ID"] ?? `local-${Date.now()}`;
   const sessionDir = env["AGENT_SESSION_DIR"] ?? `${env["RUNNER_TEMP"] ?? "/tmp"}/pi-sessions`;
@@ -1547,6 +1666,10 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       allow_hosts: loaded.config.network.allowHosts.join(","),
     });
     return 0;
+  }
+
+  if (mode === "run" || mode === "command") {
+    env = withAgentSecrets(env);
   }
 
   const client = makeClient(env);

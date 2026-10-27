@@ -11,6 +11,8 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, normalize, resolve } from "node:path";
 
+import { readPinnedPiVersion } from "./pi-runtime.js";
+
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
@@ -276,6 +278,8 @@ export interface ValidateOptions {
   repoRoot?: string;
   fileExists?: (relativePath: string) => boolean;
   instructionsContent?: string;
+  /** Exact pinned Pi version; defaults to the lockfile pin in `repoRoot`. */
+  piVersion?: string;
 }
 
 const TOP_LEVEL_KEYS = [
@@ -387,6 +391,7 @@ export function computeFingerprint(parts: {
   thinking: string;
   tools: readonly string[];
   promptTemplates: readonly string[];
+  piVersion: string;
 }): string {
   const payload = JSON.stringify({
     instructions: sha256(parts.instructions),
@@ -394,6 +399,7 @@ export function computeFingerprint(parts: {
     thinking: parts.thinking,
     tools: [...parts.tools],
     promptTemplates: [...parts.promptTemplates],
+    piVersion: parts.piVersion,
   });
   return sha256(payload);
 }
@@ -543,12 +549,14 @@ export function validateConfig(raw: YamlValue, options: ValidateOptions = {}): {
 
   const instructions = options.instructionsContent ?? "";
   const instructionsHash = sha256(instructions);
+  const piVersion = options.piVersion ?? readPinnedPiVersion(options.repoRoot ?? process.cwd());
   const fingerprint = computeFingerprint({
     instructions,
     model,
     thinking,
     tools,
     promptTemplates,
+    piVersion,
   });
 
   const config: AgentConfig = {
@@ -569,7 +577,10 @@ export function validateConfig(raw: YamlValue, options: ValidateOptions = {}): {
   return { config, instructionsHash, fingerprint };
 }
 
-export function loadConfig(repoRoot: string = process.cwd()): LoadedConfig {
+export function loadConfig(
+  repoRoot: string = process.cwd(),
+  options: { piVersion?: string } = {},
+): LoadedConfig {
   const configPath = join(repoRoot, ".agent", "config.yml");
   if (!existsSync(configPath)) {
     fail(`configuration file is missing: ${configPath}`, ".agent/config.yml");
@@ -593,6 +604,7 @@ export function loadConfig(repoRoot: string = process.cwd()): LoadedConfig {
     repoRoot,
     instructionsContent: instructions,
     fileExists: (relativePath) => existsSync(resolve(repoRoot, relativePath)),
+    ...(options.piVersion === undefined ? {} : { piVersion: options.piVersion }),
   });
 
   return {

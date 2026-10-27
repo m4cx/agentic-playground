@@ -190,10 +190,12 @@ tests/
 │   ├── directive-report.test.ts # none / list / missing / unparsable block handling
 │   ├── session-accounting.test.ts # per-session records, issue total, cache loss does not reset
 │   ├── pi-runtime.test.ts      # Bare PATH, exact-version assertion, entry outside node_modules
+│   ├── egress-preflight.test.ts # Work-tree write, GIT_DIR/.git/node_modules boundaries
 │   └── reconcile.test.ts       # Interrupted runs resolve; half-applied labels repaired
 └── integration/
     ├── run-lifecycle.test.ts   # Trigger → ack → run → result, against the stub
     ├── pi-launch.test.ts       # Spawn shape: node + resolved entry, no PATH/global binary
+    ├── workspace-git.test.ts   # Separate GIT_DIR, hooks disabled, credential via env
     ├── halt-boundary.test.ts   # Halt honoured at the next action boundary
     ├── budget-stop.test.ts     # Limit reached → stop → explicit decision required
     ├── retry-signal.test.ts    # Any retry signal aborts and fails with unexpected-retry
@@ -325,10 +327,38 @@ contracts are met where the plan's structure was not literally executable.
    ack latency, egress enforcement, halt through the Actions UI, job cancellation and reconciliation,
    and the 20-run/10-issue samples.
 
+8. **Pi runtime provisioning (amendment 2026-10-27).** The implementation follows D16/D17 with these
+   concrete choices:
+   - `src/agent/pi-runtime.ts` resolves the package through `import.meta.resolve`, walks to its
+     `package.json`, reads `bin.pi`, and validates the exact pin against the installed and locked
+     versions. A failure is `PiRuntimeError`/`environment`; it is reported before `agent:ack` and no
+     acknowledgement is posted.
+   - The run/command workflows write a mode-`0600` `AGENT_ENV_FILE` outside `sudo`'s environment; the
+     orchestrator reads and unlinks it before constructing the GitHub client. `GITHUB_TOKEN` stays in
+     the orchestrator; the provider key is used there for redaction and passed to the Pi child, whose
+     environment never contains the repository token.
+   - `prepareAgentWorkspace` moves `.git` to `$RUNNER_TEMP/agent-git` (root, `0700`), chowns the work
+     tree except `node_modules/`, best-effort adds ancestor execute bits, and then probes as the egress
+     uid: work-tree and session-cache writes succeed; `GIT_DIR`, `.git`, and `node_modules/` writes fail;
+     the Pi entry is readable and Node is executable. The probe is the authority; an unable-to-chmod
+     platform ancestor does not silently pass.
+   - Git runs with `--git-dir`/`--work-tree`, `safe.directory`, `core.hooksPath=/dev/null`, and
+     `--no-verify`; the push credential travels in `GIT_CONFIG_VALUE_0`, never in `argv` or the config.
+   - The session cache is handed back to the job user after Pi exits, so `actions/cache/save` can read
+     it. `AGENT_CACHE_OWNER_UID`/`AGENT_CACHE_OWNER_GID` are written by the workflow and preserved
+     through sudo; the orchestrator falls back to `SUDO_UID`/`SUDO_GID` for manual runs.
+   - Pi is spawned as a detached process-group leader with `HOME`/`TMPDIR`/`XDG_CACHE_HOME` under the
+     session cache; teardown kills the group and then reaps the egress uid. The reap is best-effort
+     (`pkill`/`pgrep`), while the group kill is authoritative.
+   - The pinned Pi version participates in the fingerprint, so a Pi upgrade starts a fresh session.
+   - Test suite after the amendment: 159 tests (134 unit, 25 integration; all passing), including unit coverage for the runtime
+     resolver, egress preflight, and git argument/env shape, plus a spawn-shape integration test.
+
 ## Amendment 2026-10-27: Pi runtime provisioning in GitHub Actions
 
-**Status**: Designed, not implemented. This amendment adds work to an otherwise implemented feature;
-`/speckit.tasks` must regenerate the task list for it before implementation.
+**Status**: Implemented 2026-10-27. Unit and stub-backed integration tests cover the resolution,
+privilege, workspace, and launch paths. The hosted-runner checks (quickstart S15 and the S1/S2/S5/S13/S14
+regressions) remain open as T115/T116 because they need a live sandbox repository.
 
 ### Observed gap
 
@@ -471,8 +501,10 @@ save session cache
 | `.github/scripts/agent-egress.sh` | Publish the egress uid (already) and fail if the egress user cannot traverse the workspace |
 | `.agent/README.md` | State that the Pi version is pinned by `package.json`/`package-lock.json`, is not editable in `.agent/config.yml`, and participates in the fingerprint |
 | `tests/unit/pi-runtime.test.ts` (new) | Bare `PATH`, exact-version assertion, entry outside `node_modules`, missing entry |
+| `tests/unit/egress-preflight.test.ts` (new) | Work-tree write allowed; `GIT_DIR`/`.git`/`node_modules` denied; uid check |
 | `tests/unit/config.test.ts` | Fingerprint changes when the pinned Pi version changes |
 | `tests/integration/pi-launch.test.ts` (new) | Spawn shape is `node + resolved entry`, never a bare `pi`; no GitHub token in the child |
+| `tests/integration/workspace-git.test.ts` (new) | Separate `GIT_DIR`, hooks off, push credential in the git env |
 | `tests/fake-github.ts` | Inject a stub runtime instead of `piCommand`/`argPrefix` |
 
 ### Acceptance for the amendment

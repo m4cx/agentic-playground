@@ -55,7 +55,7 @@ is written.
 | The package resolves from `<repoRoot>/node_modules/`, not from a parent or global location | The running agent must be the reviewed dependency, not whatever the runner image provides |
 | `dependencies["@earendil-works/pi-coding-agent"]` in the root `package.json` is an exact version | A range would allow silent behaviour drift (research D12) |
 | The installed version and the `package-lock.json` version both equal that pin | The version recorded in `agent:ack` must be the version that executed |
-| `bin.pi` is a readable, executable file for the egress uid | A missing entry would otherwise surface as an opaque spawn error |
+| `bin.pi` is readable and the Node binary is executable for the egress uid | A missing entry or unreadable binary would otherwise surface as an opaque spawn error |
 | When `AGENT_EGRESS_UID` is set, the orchestrator has uid 0 | Dropping to the egress uid is a privileged operation (research D17) |
 
 The resolved version, not a constant, is what `agent:ack` reports. A spawn failure after these checks
@@ -109,7 +109,8 @@ The egress policy is applied per uid, so the orchestrator must be able to `setui
 `run` and `command` workflow steps therefore execute the orchestrator through
 `sudo --preserve-env=…`; `prepare`, `proposal`, and `sweep` stay unprivileged because they never spawn
 Pi. The preserved set is non-secret only (`GITHUB_EVENT_PATH`, `GITHUB_EVENT_NAME`, `GITHUB_REPOSITORY`,
-`GITHUB_RUN_ID`, `GITHUB_WORKSPACE`, `RUNNER_TEMP`, `AGENT_EGRESS_UID`, `AGENT_ENV_FILE`); Node is
+`GITHUB_RUN_ID`, `GITHUB_WORKSPACE`, `RUNNER_TEMP`, `AGENT_EGRESS_UID`, `AGENT_ENV_FILE`,
+`AGENT_CACHE_OWNER_UID`, `AGENT_CACHE_OWNER_GID`); Node is
 invoked by absolute path because `sudo` resets `PATH`. Secrets travel in a mode-`0600` file named by
 `AGENT_ENV_FILE`, which root can read and the egress uid cannot; the orchestrator reads it once and
 unlinks it before spawning Pi. This avoids relying on the runner image granting `SETENV` for secret
@@ -139,6 +140,7 @@ the agent. The secret file is unlinked before this probe, so Pi cannot inherit a
 | `GITHUB_TOKEN` / `GH_TOKEN` | **no** | Hard rule: no repository authority inside the agent process (FR-029, research D10). The token is read from `AGENT_ENV_FILE` into the orchestrator and stripped from the child environment explicitly; a unit test asserts this. The file is unlinked before Pi starts |
 | `.git/config` credential helper / remote token | **no** | The checkout runs with `persist-credentials: false`; the git directory lives outside the work tree and only the orchestrator reads it. The push credential is passed per invocation and never written to its config. A unit test asserts the workspace git config contains no token before Pi starts (research D10, layer c) |
 | `HOME`, `TMPDIR`, `XDG_CACHE_HOME` | yes, under the chowned session directory | The egress user is created with `--no-create-home`; Pi must not fall back to an unwritable home |
+| `AGENT_ENV_FILE` | **no** | The orchestrator reads and unlinks it before spawning Pi, and `sanitizeEnvironment` strips the name |
 | `PATH` | yes, without any Pi entry | Needed by the agent's own `bash` tool; Pi itself is launched by absolute path, so `PATH` cannot change which Pi runs |
 | `NODE_COMPILE_CACHE` | not set by the workflow | A runner-provided cache path could be unwritable for the egress uid |
 | Model or thinking overrides | **no** | They are configuration, not environment (`.agent/config.yml`), so they are reviewable |

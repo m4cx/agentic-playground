@@ -147,8 +147,8 @@ checked before the acknowledgement and before the first model call. Only `versio
 
 | Field | Type | Source | Validation |
 |-------|------|--------|------------|
-| `nodePath` | absolute path | `process.execPath` | The interpreter that also runs the orchestrator; not from `PATH` |
-| `entry` | absolute path | `<repoRoot>/node_modules/@earendil-works/pi-coding-agent/<package.json#bin.pi>` | Must exist, be a file, and be readable/executable by the egress uid; must not resolve outside `<repoRoot>/node_modules` |
+| `nodePath` | absolute path | `process.execPath` | The interpreter that also runs the orchestrator, executable by the egress uid; not from `PATH` |
+| `entry` | absolute path | `<repoRoot>/node_modules/@earendil-works/pi-coding-agent/<package.json#bin.pi>` | Must exist, be a file, and be readable by the egress uid; must not resolve outside `<repoRoot>/node_modules` |
 | `version` | semver string | Installed package `package.json` | Must equal the exact dependency pin in the root `package.json` and the `package-lock.json` version; recorded in `agent:ack` (research D16) |
 | `egressUid` | uid, optional | `AGENT_EGRESS_UID` written by `agent-egress.sh` | When present, the orchestrator must be uid 0 and the preflight probe must show a writable work tree, an unreachable `GIT_DIR`, no `.git` in the work tree, and a read-only `node_modules/` (research D17) |
 | `workTreeOwner` | uid, optional | Orchestrator before spawn | Recursively the egress uid, so the agent can edit and create files, except `node_modules/` which stays read-only |

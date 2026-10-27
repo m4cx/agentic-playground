@@ -61,6 +61,7 @@ test("trigger → acknowledgement → turn → result → terminal state", async
   const ack = harness.github.markerComments(11, "ack")[0]?.body ?? "";
   assert.match(ack, /queue delay/);
   assert.match(ack, /configuration fingerprint/);
+  assert.match(ack, /Pi `1\.4\.0`/);
 
   // The stub never saw a repository credential.
   const log = readFileSync(stubLogPath(harness), "utf8");
@@ -162,6 +163,24 @@ test("a configured template that did not load fails the run before any prompt", 
 
   const log = readFileSync(stubLogPath(harness), "utf8");
   assert.equal(log.includes('"type":"prompt"'), false, "no model call may happen");
+});
+
+test("a non-root orchestrator with an egress uid fails before the acknowledgement", async () => {
+  const harness = makeHarness({ env: { AGENT_EGRESS_UID: "1500" }, getuid: () => 1001 });
+  harness.github.addIssue({
+    number: 16,
+    title: "Privilege check",
+    body: "Do something.",
+    labels: ["agent:run"],
+  });
+
+  const result = await harness.orchestrator.run(labelledTrigger(harness, 16));
+  assert.equal(result.status, "failed");
+  assert.equal(result.failureReason, "environment");
+  assert.equal(harness.github.markerComments(16, "ack").length, 0);
+  const error = harness.github.markerComments(16, "error")[0]?.body ?? "";
+  assert.match(error, /not uid 0/);
+  assert.match(error, /sudo/);
 });
 
 test("a fresh session is reported as a cold start in the acknowledgement", async () => {

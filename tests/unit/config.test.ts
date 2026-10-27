@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -18,6 +18,14 @@ function fixtureRepo(mutate?: (config: string) => string, instructions = "# Rule
   mkdirSync(join(root, ".agent"), { recursive: true });
   mkdirSync(join(root, ".pi", "prompts"), { recursive: true });
   writeFileSync(join(root, ".pi", "prompts", "speckit.specify.md"), "# specify\n");
+  writeFileSync(
+    join(root, "package.json"),
+    JSON.stringify({ dependencies: { "@earendil-works/pi-coding-agent": "1.4.0" } }),
+  );
+  writeFileSync(
+    join(root, "package-lock.json"),
+    JSON.stringify({ packages: { "node_modules/@earendil-works/pi-coding-agent": { version: "1.4.0" } } }),
+  );
   const config = baseYaml();
   writeFileSync(join(root, ".agent", "config.yml"), mutate === undefined ? config : mutate(config));
   writeFileSync(join(root, ".agent", "instructions.md"), instructions);
@@ -154,13 +162,14 @@ test("the sweep window must exceed the run timeout", () => {
   assert.throws(() => loadConfig(root), /comfortably larger/);
 });
 
-test("the fingerprint changes for each of its five inputs", () => {
+test("the fingerprint changes for each of its inputs", () => {
   const base = {
     instructions: "instructions",
     model: "anthropic/claude-sonnet-4-5",
     thinking: "high",
     tools: ["read", "bash"],
     promptTemplates: [".pi/prompts/speckit.specify.md"],
+    piVersion: "1.4.0",
   };
   const original = computeFingerprint(base);
   assert.notEqual(computeFingerprint({ ...base, instructions: "changed" }), original);
@@ -171,7 +180,21 @@ test("the fingerprint changes for each of its five inputs", () => {
     computeFingerprint({ ...base, promptTemplates: [".pi/prompts/speckit.plan.md"] }),
     original,
   );
+  assert.notEqual(computeFingerprint({ ...base, piVersion: "1.4.1" }), original);
   assert.equal(computeFingerprint({ ...base, tools: ["read", "bash"] }), original);
+});
+
+test("a missing or ranged Pi pin fails closed", () => {
+  const root = fixtureRepo();
+  rmSync(join(root, "package.json"));
+  assert.throws(() => loadConfig(root), /package\.json is missing/);
+
+  const ranged = fixtureRepo((config) => config);
+  writeFileSync(
+    join(ranged, "package.json"),
+    JSON.stringify({ dependencies: { "@earendil-works/pi-coding-agent": "^1.4.0" } }),
+  );
+  assert.throws(() => loadConfig(ranged), /must be an exact version/);
 });
 
 test("validation can be exercised without touching the filesystem", () => {

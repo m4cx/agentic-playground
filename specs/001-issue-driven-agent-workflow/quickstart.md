@@ -45,6 +45,10 @@ Expected: all tests pass, and specifically:
   `environment` before any model call.
 - `tests/integration/pi-launch.test.ts` — the spawn shape is `node + resolved entry`, never a bare `pi`,
   and the child environment contains the provider key but no GitHub token.
+- `tests/integration/workspace-git.test.ts` — git uses the separate `GIT_DIR`, `core.hooksPath=/dev/null`,
+  `--no-verify`, and the push credential only in `GIT_CONFIG_VALUE_0`.
+- `tests/unit/egress-preflight.test.ts` — a work-tree write succeeds; `GIT_DIR`, an in-tree `.git`, and
+  `node_modules/` are refused as writable/readable by the egress uid.
 - `tests/unit/commands.test.ts` — `/agent` mid-sentence and inside a code fence are *not* commands
   ([contracts/commands.md](./contracts/commands.md) grammar).
 - `tests/unit/permissions.test.ts` — write-access gate, and re-check at decision time.
@@ -274,16 +278,18 @@ reports the new version and the fingerprint changes even though no `.agent/` fil
 3. Inspect the job log for the resolved runtime line (`node=… entry=… version=…`).
 4. After the run starts, from the job shell (root) probe the boundaries:
    `sudo -u agent-egress test -w "$GITHUB_WORKSPACE/README.md"` succeeds,
-   `sudo -u agent-egress test -e "$GIT_DIR"` fails, `test -e "$GITHUB_WORKSPACE/.git"` fails, and
+   `sudo -u agent-egress test -e "$RUNNER_TEMP/agent-git"` fails,
+   `test -e "$GITHUB_WORKSPACE/.git"` fails, and
    `sudo -u agent-egress test -w "$GITHUB_WORKSPACE/node_modules"` fails.
-5. Inspect the Pi child: `ps -o uid= -p <pi-pid>` equals `AGENT_EGRESS_UID`; the orchestrator runs as uid 0.
-6. After teardown, confirm no process from the Pi group is still alive before the proposal branch is
-   committed.
+5. Confirm the secret file is gone before Pi starts: `test -e "$RUNNER_TEMP/agent-env"` fails.
+6. Inspect the Pi child: `ps -o uid= -p <pi-pid>` equals `AGENT_EGRESS_UID`; the orchestrator runs as uid 0.
+7. After teardown, confirm `pgrep -u agent-egress` returns nothing and no process from the Pi group is
+   still alive before the proposal branch is committed.
 
 **Expected**: the run needs no global or separately installed Pi; the version in `agent:ack` matches
-`package-lock.json`; the agent can edit tracked files but cannot reach the git directory; the GitHub
-token is absent from the Pi environment; and the push credential appears in neither `argv` (checked with
-`ps`) nor the git config.
+`package-lock.json`; the agent can edit tracked files but cannot reach `$RUNNER_TEMP/agent-git`; the
+GitHub token is absent from the Pi environment; `$RUNNER_TEMP/agent-env` is removed before Pi starts;
+and the push credential appears in neither `argv` (checked with `ps`) nor the git config.
 
 ## Troubleshooting signals worth watching
 

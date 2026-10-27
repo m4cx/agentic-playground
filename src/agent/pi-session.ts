@@ -9,10 +9,11 @@
  * mid-action. `abort` is therefore only sent from the boundary handler.
  */
 
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { chownSync, existsSync, readdirSync } from "node:fs";
-import { basename } from "node:path";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { chownSync, existsSync, lstatSync, mkdirSync, readdirSync } from "node:fs";
+import { basename, join } from "node:path";
 import type { AgentConfig } from "./config.js";
+import { reapEgressProcesses, type PiRuntime } from "./pi-runtime.js";
 
 export interface SessionStats {
   costUsd: number;
@@ -70,10 +71,8 @@ export interface PiSessionOptions {
   issueNumber: number;
   fingerprint: string;
   sessionDir: string;
-  piVersion?: string;
-  piCommand?: string;
-  /** Arguments inserted before the Pi flags; used to run a stub entry script. */
-  argPrefix?: readonly string[];
+  /** Resolved from the pinned dependency, never from PATH (research D16). */
+  runtime: PiRuntime;
   spawnImpl?: SpawnLike;
   env?: NodeJS.ProcessEnv;
   egressUid?: number;
@@ -83,6 +82,8 @@ export interface PiSessionOptions {
   onBoundary?: (context: BoundaryContext) => Promise<void>;
   onEvent?: (event: Record<string, unknown>) => void;
   onDiagnostic?: (line: string) => void;
+  /** Test seam for the uid-wide reap performed after the group is killed. */
+  reapProcesses?: (uid: number) => void;
 }
 
 export interface BoundaryContext {
@@ -93,7 +94,13 @@ export interface BoundaryContext {
 }
 
 /** Environment variables that must never reach the agent process. */
-export const STRIPPED_ENVIRONMENT = ["GITHUB_TOKEN", "GH_TOKEN", "GITHUB_ENV", "GITHUB_OUTPUT"] as const;
+export const STRIPPED_ENVIRONMENT = [
+  "GITHUB_TOKEN",
+  "GH_TOKEN",
+  "GITHUB_ENV",
+  "GITHUB_OUTPUT",
+  "AGENT_ENV_FILE",
+] as const;
 
 export function sanitizeEnvironment(
   source: NodeJS.ProcessEnv,
@@ -119,6 +126,18 @@ export function sessionCachePresent(sessionDir: string, sessionId: string): bool
   } catch {
     return false;
   }
+}
+
+/** Reject a cache-restored symlink instead of following it into a privileged path. */
+function ensureRealDirectory(path: string): void {
+  if (existsSync(path)) {
+    const stats = lstatSync(path);
+    if (stats.isSymbolicLink() || !stats.isDirectory()) {
+      throw new PiSessionError(`session path is not a real directory: ${path}`, "environment");
+    }
+    return;
+  }
+  mkdirSync(path, { recursive: true });
 }
 
 export function sessionIdFor(issueNumber: number, fingerprint: string): string {
@@ -239,22 +258,43 @@ export class PiSession {
       options.spawnImpl ??
       ((command, spawnArgs, spawnOptions) => spawn(command, [...spawnArgs], spawnOptions) as ChildProcessWithoutNullStreams);
 
-    // The workspace must be writable by the egress-restricted user that runs Pi.
-    if (options.egressUid !== undefined && process.getuid?.() === 0) {
-      try {
-        chownSync(options.repoRoot, options.egressUid, options.egressGid ?? options.egressUid);
-        chownSync(options.sessionDir, options.egressUid, options.egressGid ?? options.egressUid);
-      } catch {
-        // A chown failure surfaces later as a Pi startup failure with `environment`.
+    // The egress user has no home of its own; give Pi writable directories under
+    // the session cache. The workspace itself is prepared by prepareAgentWorkspace.
+    const homeDir = join(options.sessionDir, "home");
+    const tmpDir = join(options.sessionDir, "tmp");
+    const cacheDir = join(options.sessionDir, "cache");
+    try {
+      for (const directory of [options.sessionDir, homeDir, tmpDir, cacheDir]) {
+        ensureRealDirectory(directory);
+        if (options.egressUid !== undefined && process.getuid?.() === 0) {
+          chownSync(directory, options.egressUid, options.egressGid ?? options.egressUid);
+        }
       }
+    } catch (error) {
+      if (error instanceof PiSessionError) throw error;
+      throw new PiSessionError(
+        `could not prepare the session directory: ${error instanceof Error ? error.message : String(error)}`,
+        "environment",
+      );
     }
+    env["HOME"] = homeDir;
+    env["TMPDIR"] = tmpDir;
+    env["XDG_CACHE_HOME"] = cacheDir;
 
-    this.child = spawnImpl(options.piCommand ?? "pi", [...(options.argPrefix ?? []), ...args], {
-      cwd: options.repoRoot,
-      env,
-      stdio: ["pipe", "pipe", "pipe"],
-      ...(options.egressUid === undefined ? {} : { uid: options.egressUid, gid: options.egressGid ?? options.egressUid }),
-    });
+    try {
+      this.child = spawnImpl(options.runtime.nodePath, [options.runtime.entry, ...args], {
+        cwd: options.repoRoot,
+        env,
+        stdio: ["pipe", "pipe", "pipe"],
+        detached: true,
+        ...(options.egressUid === undefined ? {} : { uid: options.egressUid, gid: options.egressGid ?? options.egressUid }),
+      });
+    } catch (error) {
+      throw new PiSessionError(
+        `Pi failed to start: ${error instanceof Error ? error.message : String(error)}`,
+        "environment",
+      );
+    }
     this.attach();
   }
 
@@ -263,7 +303,7 @@ export class PiSession {
   }
 
   get piVersion(): string {
-    return this.options.piVersion ?? "1.4.0";
+    return this.options.runtime.version;
   }
 
   get observedEventTypes(): readonly string[] {
@@ -596,7 +636,36 @@ export class PiSession {
     const timeout = new Promise<void>((resolve) => setTimeout(resolve, 10_000));
     await Promise.race([exited, timeout]);
     if (this.child.exitCode === null) {
-      this.child.kill("SIGKILL");
+      this.killGroup();
+    }
+    await this.reapEgress();
+  }
+
+  /** Signal every process of the egress uid, then wait briefly until none remain. */
+  private async reapEgress(): Promise<void> {
+    const uid = this.options.egressUid;
+    if (uid === undefined) return;
+    (this.options.reapProcesses ?? reapEgressProcesses)(uid);
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline) {
+      const remaining = spawnSync("pgrep", ["-u", String(uid)], { stdio: "ignore" });
+      if (remaining.error !== undefined || remaining.status !== 0) return;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+
+  /** Kill the detached process group, including children the agent started. */
+  private killGroup(): void {
+    const pid = this.child.pid;
+    if (pid === undefined) return;
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {
+      try {
+        this.child.kill("SIGKILL");
+      } catch {
+        // The process is already gone.
+      }
     }
   }
 }
