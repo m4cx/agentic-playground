@@ -90,12 +90,23 @@ only permitted translation (FR-010).
 
 ```yaml
 concurrency:
-  # The value is computed by the first step of the job, because the event may carry either an issue
-  # number (issues, issue_comment) or a pull-request number (pull_request), and a pull request names its
-  # issue in the body and in the branch name agent/<issue>-<slug>.
-  group: agent-issue-<resolved-issue-number>
+  # GitHub evaluates this before any step runs, so it cannot be computed inside the job.
+  # pull_request events carry the pull-request number, not the issue number.
+  group: agent-issue-${{ github.event.issue.number || github.event.pull_request.number || inputs.issue }}
   cancel-in-progress: false
 ```
 
-`cancel-in-progress: false` is required, not cosmetic: cancelling a run mid-turn would abandon work
-that the spec says must be reported, and would break the boundary rule (FR-027).
+Consequences of the mechanism, stated rather than assumed:
+
+1. **No step can compute the group.** Any wording that a first step derives the key is wrong; the
+   expression above is the only available form.
+2. **A pull-request event and a run may land in different groups** (same logical issue, two numbers). A
+   close can therefore interleave with a running job. This is accepted because the state log is
+   append-only and the label is reconciled to its newest row (I2), and because the `agent:outcome` marker
+   makes a duplicate post impossible.
+3. **If strict serialization is ever required**, the only correct lever is one global group
+   (`group: agent-workflow`), which serializes *all* issues to one job — a scope change, not a
+   configuration tweak.
+
+`cancel-in-progress: false` remains required: cancelling mid-turn would abandon work the spec says must be
+reported and would break the boundary rule (FR-027).

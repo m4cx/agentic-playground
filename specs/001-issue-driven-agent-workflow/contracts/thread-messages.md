@@ -91,6 +91,15 @@ Stopping at an action boundary.
 Consumed so far: `<cost>`. Resume with `/agent retry` (halt) or `/agent continue` (waiting).
 ```
 
+When the stop was caused by the request changing under the run (FR-023), the same message carries:
+
+```markdown
+**Request changed during the run**
+- Acted on: `<old-hash-short>` (captured at <timestamp>)
+- Found now: `<new-hash-short>`
+- Nothing further happens until a person posts `/agent continue`.
+```
+
 ### 4. Result (`agent:result`) — the outcome (FR-005)
 
 ```markdown

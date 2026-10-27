@@ -141,7 +141,7 @@ tsconfig.json                 # strict, module nodenext, rootDir ., outDir dist
 └── README.md                 # How a maintainer changes agent behaviour
 
 src/agent/
-├── main.ts                   # Entry point: event → dispatch (run, command, or sweep)
+├── main.ts                   # Entry point: event → dispatch (run, command, sweep, or prepare)
 ├── events.ts                 # GitHub event payload → Trigger or command input
 ├── config.ts                 # Load, validate, and fingerprint .agent/config.yml
 ├── permissions.ts            # Write-access gate and re-check at decision time

@@ -61,9 +61,11 @@ Single project: `src/agent/` (TypeScript), `tests/`, `.agent/` (reviewable confi
       `network.allowHosts`, fail closed (non-zero exit) when the rules cannot be applied, and print the
       applied policy for the job log (FR-034)
 - [ ] T007 [P] Create the four workflow skeletons with triggers, least-privilege `permissions`, and the
-      `agent-issue-<resolved-issue-number>` concurrency group: `.github/workflows/agent-run.yml`
-      (`issues`), `agent-command.yml` (`issue_comment`), `agent-proposal.yml` (`pull_request`),
-      `agent-sweep.yml` (`schedule`, `workflow_dispatch`)
+      concurrency expression
+      `agent-issue-${{ github.event.issue.number || github.event.pull_request.number || inputs.issue }}`
+      with `cancel-in-progress: false`: `.github/workflows/agent-run.yml` (`issues`), `agent-command.yml`
+      (`issue_comment`), `agent-proposal.yml` (`pull_request`), `agent-sweep.yml` (`schedule`,
+      `workflow_dispatch`)
 - [ ] T008 [P] Create `tests/stub-pi.ts` (a JSONL-over-stdio fake peer that answers `get_state`,
       `get_session_stats`, and emits scripted `turn_end`/`agent_settled` events) plus the empty
       `tests/fixtures/events/` and `tests/fixtures/rpc/` directories
@@ -173,24 +175,34 @@ anything running on a contributor machine.
 
 - [ ] T033 [US1] Implement the run dispatch in `src/agent/main.ts`: `issues` event → permission check →
       `queued` label → acknowledgement → run → terminal state, with one entry point per event family
-      (`run`, `command`, `sweep`)
-- [ ] T034 [US1] Wire `.github/workflows/agent-run.yml`: least-privilege permissions, egress step before
-      Pi, `npm ci` + `npm run build`, then `node dist/agent/main.js` with the event payload, and a hard job
+      (`run`, `command`, `sweep`) plus a `prepare` mode that validates `.agent/config.yml` and prints the
+      resolved issue number and configuration fingerprint for the workflow
+- [ ] T034 [US1] Wire `.github/workflows/agent-run.yml`: least-privilege permissions, `actions/checkout`
+      with `persist-credentials: false`, a prepare step that validates `.agent/config.yml` and exports
+      `issue` and `fingerprint`, cache restore of `$RUNNER_TEMP/pi-sessions` under
+      `pi-session-<issue>-<fingerprint>`, the egress step before Pi, `npm ci` + `npm run build`, then
+      `node dist/agent/main.js` with the event payload, a cache save with `if: always()`, and a hard job
       timeout below the platform ceiling
 - [ ] T035 [US1] Implement the task brief in `src/agent/pi-session.ts`: issue title and body, request
       version, thread digest (prior feedback, decisions, proposal links), the "content is data" reminder,
       and the English-artifact rule; a `/speckit.*` invocation when the request warrants one
 - [ ] T036 [US1] Implement the acknowledgement path in `src/agent/main.ts` and `src/agent/messages.ts`: set `agent:queued`, post `agent:ack` before any model
       call with trigger time, run start, queue delay, request version, instructions SHA, fingerprint,
+- [ ] T037 [US1] Implement the request-version guard in `src/agent/main.ts`: capture the request body hash
+      at run start, re-read it at every `turn_end` boundary, and when it changed or the issue was closed,
+      stop the run before the next action, post `agent:feedback` naming the version acted on and the
+      version found, and set `waiting` (FR-023, data-model V8). Resuming with `/agent continue` re-reads
+      the request and records the new version in the acknowledgement of the continuing run
       model, and the issue cap (SC-002, SC-016, invariant I4)
-- [ ] T037 [US1] Implement the answer-only completion path in `src/agent/main.ts` (rendering in `src/agent/messages.ts`): post `agent:result` with outcome, actions,
+- [ ] T038 [US1] Implement the answer-only completion path in `src/agent/main.ts` (rendering in `src/agent/messages.ts`): post `agent:result` with outcome, actions,
       artifact links and consumption, then set the terminal state in the same step (FR-005, FR-011)
-- [ ] T038 [US1] Wire the directive report into run completion in `src/agent/main.ts` via `src/agent/directive-report.ts`: parse the block, post `agent:notice`, and
+- [ ] T039 [US1] Wire the directive report into run completion in `src/agent/main.ts` via `src/agent/directive-report.ts`: parse the block, post `agent:notice`, and
       record "report missing" when the agent produced none (FR-030)
-- [ ] T039 [P] [US1] Write `tests/integration/run-lifecycle.test.ts` against `tests/stub-pi.ts`: trigger →
-      ack → turn → result → terminal state, and a second run on the same issue not starting twice
-      (after T033–T038)
-- [ ] T040 [US1] Validate scenario S1 of `quickstart.md` in a sandbox repository and record the observed
+- [ ] T040 [P] [US1] Write `tests/integration/run-lifecycle.test.ts` against `tests/stub-pi.ts`: trigger →
+      ack → turn → result → terminal state; a second run on the same issue not starting twice; and a
+      request edited mid-run stopping at the boundary with both request versions in the feedback comment
+      (after T033–T039)
+- [ ] T041 [US1] Validate scenario S1 of `quickstart.md` in a sandbox repository and record the observed
       acknowledgement latency and queue delay
 
 **Checkpoint**: MVP. A small request is answered end to end through the issue alone.
@@ -206,37 +218,45 @@ merge applies it; a close resolves the issue.
 default branch stays unchanged, then merge it and confirm the issue reaches `finished`; repeat with a
 closed-unmerged pull request and confirm `rejected`.
 
-- [ ] T041 [US2] Implement `src/agent/workspace.ts` branch handling: name `agent/<issue>-<slug>` with
+- [ ] T042 [US2] Implement `src/agent/workspace.ts` branch handling: name `agent/<issue>-<slug>` with
       lower-case ASCII `[a-z0-9-]`, at most six words, `issue-<number>` fallback for non-Latin titles,
       `-2`/`-3` suffix instead of force-push, created from the default branch head and recorded in the
       acknowledgement
-- [ ] T042 [US2] Implement diff collection and commit in `src/agent/workspace.ts`: exclude `dist/`,
+- [ ] T043 [US2] Implement diff collection and commit in `src/agent/workspace.ts`: exclude `dist/`,
       session files and `.git`, apply the `proposal.maxChangedPaths` / `proposal.maxDiffLines` bounds
       (`request-too-large`), redact before commit, abort with `secret-request` and commit nothing when a
       credential is detected, and use the fixed English message `agent: <summary> (#<issue>)` (≤72 chars,
+- [ ] T044 [US2] Implement the push in `src/agent/workspace.ts`: push `agent/<issue>-<slug>` with a
+      per-job credential supplied for that one command only (`git -c http.extraheader="AUTHORIZATION:
+      basic <base64>"` or a `GIT_ASKPASS` helper), never written to `.git/config`; remove it immediately
+      afterwards and assert that the workspace git config contains no token. A push without a usable
+      credential fails the run with `environment`, and a rejected push (protected branch,
+      non-fast-forward) fails with `content-conflict` (FR-021, research D10 layer c)
       fallback `address issue <number>`)
-- [ ] T043 [US2] Implement `src/agent/proposal.ts`: open the pull request (base default branch, head
+- [ ] T045 [US2] Implement `src/agent/proposal.ts`: open the pull request (base default branch, head
       `agent/…`, `agent:proposal` label, no reviewers, not a draft) with the English body containing the
       issue link, what changed, what was not done, how it was verified, and the request version; link it in
       the thread and set `waiting` with `next act = review the proposal`
-- [ ] T044 [US2] Ensure the proposal path cannot apply changes: no merge/approve endpoint in
+- [ ] T046 [US2] Ensure the proposal path cannot apply changes: no merge/approve endpoint in
       `src/agent/github.ts`, `/agent approve` only annotates, and a default-branch push is impossible with
       the credential the orchestrator uses (FR-007, FR-008)
-- [ ] T045 [P] [US2] Write `tests/unit/proposal.test.ts`: branch naming including the non-Latin fallback
-      and suffix behaviour, bounded diff rejection, redaction abort, and a client with no merge capability
-      (after T041–T044)
-- [ ] T046 [US2] Wire `.github/workflows/agent-proposal.yml` for `pull_request` `closed` and `review`
+- [ ] T047 [P] [US2] Write `tests/unit/proposal.test.ts`: branch naming including the non-Latin fallback
+      and suffix behaviour, bounded diff rejection, redaction abort, a client with no merge capability, and
+      a push helper that carries its credential as an argument or askpass value, never as a config entry
+      (after T042–T046)
+- [ ] T048 [US2] Wire `.github/workflows/agent-proposal.yml` for `pull_request` `closed` and `review`
       events with the same permission gate and a resolved issue number from the branch name or body link
-- [ ] T047 [US2] Implement review decisions in `src/agent/proposal.ts`: `approved` → `approve`,
+- [ ] T049 [US2] Implement review decisions in `src/agent/proposal.ts`: `approved` → `approve`,
       `changes_requested` → `reject`, mirrored into the thread as `agent:decision` with source `review` and
       actor/timestamp, ignoring reviews from accounts without write access
-- [ ] T048 [US2] Implement close handling in `src/agent/proposal.ts` and `src/agent/labels.ts`: on `pull_request.closed` record `agent:outcome` and a decision
+- [ ] T050 [US2] Implement close handling in `src/agent/proposal.ts` and `src/agent/labels.ts`: on `pull_request.closed` record `agent:outcome` and a decision
       with source `close`, set `finished` when merged and `rejected` when not, and append the state row in
       the same operation (FR-033)
-- [ ] T049 [P] [US2] Write `tests/integration/proposal-outcome.test.ts`: review decision recorded, merged
-      close → `finished`, unmerged close → `rejected`, and the default branch untouched before the merge
-      (after T046–T048)
-- [ ] T050 [US2] Validate scenario S2 of `quickstart.md`, including the egress check of S13
+- [ ] T051 [P] [US2] Write `tests/integration/proposal-outcome.test.ts`: review decision recorded, merged
+      close → `finished`, unmerged close → `rejected`, the default branch untouched before the merge, and
+      after the run the branch existing on the remote while `.git/config` contains no credential
+      (after T048–T050)
+- [ ] T052 [US2] Validate scenario S2 of `quickstart.md`, including the egress check of S13
 
 **Checkpoint**: changes are safe to enable; nothing reaches the default branch without a human merge.
 
@@ -249,29 +269,29 @@ closed-unmerged pull request and confirm `rejected`.
 **Independent Test**: start work, watch the state rows develop and end in an end state; kill a job
 mid-run and confirm the issue is reconciled to `failed` with reason `interrupted`.
 
-- [ ] T051 [US3] Implement the status refresh in `src/agent/main.ts`: on every `turn_end` boundary append a
+- [ ] T053 [US3] Implement the status refresh in `src/agent/main.ts`: on every `turn_end` boundary append a
       state row and update `Consumed`, `Proposal` and `Next act needed`, so no follow-up question is needed
       (SC-007)
-- [ ] T052 [US3] Implement failure classification in `src/agent/messages.ts` and `src/agent/main.ts`: the
+- [ ] T054 [US3] Implement failure classification in `src/agent/messages.ts` and `src/agent/main.ts`: the
       enum of `contracts/thread-messages.md` incl. `unexpected-retry`, a requester-actionable vs
       environmental split, and the "can you fix it?" line (FR-012)
-- [ ] T053 [P] [US3] Write `tests/integration/retry-signal.test.ts`: a `summarization_retry_scheduled`
+- [ ] T055 [P] [US3] Write `tests/integration/retry-signal.test.ts`: a `summarization_retry_scheduled`
       or `willRetry` event aborts the run, fails it with `unexpected-retry`, and the thread names the
-      signal (after T052)
-- [ ] T054 [US3] Guarantee end states in `src/agent/main.ts` and `src/agent/state-log.ts`: write the terminal label in the same step as the terminal comment,
+      signal (after T054)
+- [ ] T056 [US3] Guarantee end states in `src/agent/main.ts` and `src/agent/state-log.ts`: write the terminal label in the same step as the terminal comment,
       and treat a missing `endedAt` as a defect that fails the run rather than leaving `working`
       (FR-011, invariant I3)
-- [ ] T055 [P] [US3] Write `tests/integration/budget-stop.test.ts`: the limit stops the run at a
+- [ ] T057 [P] [US3] Write `tests/integration/budget-stop.test.ts`: the limit stops the run at a
       boundary, posts `agent:limit`, sets `waiting`, and nothing continues without `/agent continue`
       (after T030)
-- [ ] T056 [US3] Implement `src/agent/reconcile.ts`: resolve `working` issues older than the sweep window
+- [ ] T058 [US3] Implement `src/agent/reconcile.ts`: resolve `working` issues older than the sweep window
       to `failed`/`interrupted`, repair half-applied state-label changes, and ignore issues an active job
       owns (invariant I5)
-- [ ] T057 [US3] Wire `.github/workflows/agent-sweep.yml`: `schedule` plus `workflow_dispatch`, dry-run
+- [ ] T059 [US3] Wire `.github/workflows/agent-sweep.yml`: `schedule` plus `workflow_dispatch`, dry-run
       mode, and a summary line of what it repaired
-- [ ] T058 [P] [US3] Write `tests/unit/reconcile.test.ts`: interrupted run resolves, half-applied labels
-      repaired, active run untouched (after T056)
-- [ ] T059 [US3] Validate scenario S3 of `quickstart.md`, including killing a job in the Actions UI and
+- [ ] T060 [P] [US3] Write `tests/unit/reconcile.test.ts`: interrupted run resolves, half-applied labels
+      repaired, active run untouched (after T058)
+- [ ] T061 [US3] Validate scenario S3 of `quickstart.md`, including killing a job in the Actions UI and
       confirming `agent-sweep.yml` reconciles it
 
 **Checkpoint**: progress is legible at any time, from the issue alone.
@@ -286,21 +306,24 @@ new work only.
 **Independent Test**: edit a house rule in `.agent/instructions.md`, merge it, trigger a run, and confirm
 the new run records the new instructions version while the earlier run keeps its old one.
 
-- [ ] T060 [US4] Load `.agent/instructions.md` from the trusted-ref checkout and pass it via
+- [ ] T062 [US4] Load `.agent/instructions.md` from the trusted-ref checkout and pass it via
       `--append-system-prompt`; record its path, commit SHA and short hash in `agent:ack` (FR-014)
-- [ ] T061 [US4] Enforce the prompt-template allowlist in `src/agent/config.ts` and `src/agent/pi-session.ts`, and assert at startup that every
+- [ ] T063 [US4] Enforce the prompt-template allowlist in `src/agent/config.ts` and `src/agent/pi-session.ts`, and assert at startup that every
       configured command exists; a missing or non-allowlisted template fails the run with `environment`
       before any model call (research D13)
-- [ ] T062 [P] [US4] Write `tests/unit/templates.test.ts`: allowlisted templates only, missing path fails
+- [ ] T064 [P] [US4] Write `tests/unit/templates.test.ts`: allowlisted templates only, missing path fails
       validation, an out-of-repository path fails, a non-allowlisted slash command stays plain text
-      (after T061)
-- [ ] T063 [US4] Enforce "new work only" for configuration in `src/agent/pi-session.ts` and `src/agent/config.ts`: fingerprint-scoped session id and cache key, a
-      cold start with thread digest on mismatch, and no reuse of a session under changed rules (FR-014)
-- [ ] T064 [US4] Report an instruction the agent cannot honour through `src/agent/messages.ts`: a dedicated `agent:notice` line naming the
+      (after T063)
+- [ ] T065 [US4] Enforce "new work only" for configuration in `src/agent/pi-session.ts` and
+      `src/agent/config.ts`: fingerprint-scoped session id and cache key, a cold start with the thread
+      digest on mismatch, no reuse of a session under changed rules, and a "cold start" note in the
+      acknowledgement when the cache was missing; `agent:session` reports `endedBecause: lost` only when a
+      session existed before and then disappeared (FR-014, research D5)
+- [ ] T066 [US4] Report an instruction the agent cannot honour through `src/agent/messages.ts`: a dedicated `agent:notice` line naming the
       instruction and the reason, instead of a silent deviation
-- [ ] T065 [US4] Validate scenario S4 of `quickstart.md` (new commit SHA in the new run, old SHA in the
+- [ ] T067 [US4] Validate scenario S4 of `quickstart.md` (new commit SHA in the new run, old SHA in the
       earlier record)
-- [ ] T066 [US4] Validate scenario S12 of `quickstart.md`, including the negative variant where a
+- [ ] T068 [US4] Validate scenario S12 of `quickstart.md`, including the negative variant where a
       non-allowlisted `/speckit.analyze` must be reported as an ignored directive
 
 **Checkpoint**: behaviour is governed by reviewable repository content, and the record shows which version
@@ -317,31 +340,31 @@ before anything is reported as halted.
 comment lists what was completed and left undone, then the issue becomes `halted`; post a halt from an
 account without write access and confirm it is ignored with an explanation.
 
-- [ ] T067 [US5] Wire `.github/workflows/agent-command.yml`: `issue_comment` → command parse →
+- [ ] T069 [US5] Wire `.github/workflows/agent-command.yml`: `issue_comment` → command parse →
       permission re-check → dispatch into `src/agent/main.ts` without starting a model call for
       informational commands
-- [ ] T068 [US5] Implement command dispatch in `src/agent/main.ts`: route decision words to their effects,
+- [ ] T070 [US5] Implement command dispatch in `src/agent/main.ts`: route decision words to their effects,
       record `agent:decision` with source `command`, actor, reason (redacted) and the applied boundary, and
       answer unknown words with the help text (FR-026)
-- [ ] T069 [US5] Implement `src/agent/halt-watch.ts`: poll the thread for commands while a run is active,
+- [ ] T071 [US5] Implement `src/agent/halt-watch.ts`: poll the thread for commands while a run is active,
       queue them in arrival order, and expose them to the boundary loop only
-- [ ] T070 [US5] Implement the halt sequence for `src/agent/main.ts` + `src/agent/pi-session.ts`: at the
+- [ ] T072 [US5] Implement the halt sequence for `src/agent/main.ts` + `src/agent/pi-session.ts`: at the
       next `turn_end` call `get_state`, post `agent:feedback` (completed / not done / state to resume from,
       consumed), then `abort`, then wait for `agent_settled`, then `halted` (FR-027, FR-028, SC-009)
-- [ ] T071 [US5] Implement the repository-wide halt in `src/agent/commands.ts` and `src/agent/main.ts` via `config.globalHaltIssue`: block new work until
+- [ ] T073 [US5] Implement the repository-wide halt in `src/agent/commands.ts` and `src/agent/main.ts` via `config.globalHaltIssue`: block new work until
       lifted, state the scope in the reply, and reflect the blocking state in that issue (FR-015)
-- [ ] T072 [US5] Implement `retry` with lineage in `src/agent/main.ts` and `src/agent/messages.ts`: new run, `continuesRunId` recorded in `agent:ack` and the
+- [ ] T074 [US5] Implement `retry` with lineage in `src/agent/main.ts` and `src/agent/messages.ts`: new run, `continuesRunId` recorded in `agent:ack` and the
       state row, thread shows the attempt sequence (FR-031, FR-032)
-- [ ] T073 [US5] Implement `continue` in `src/agent/budget.ts` and `src/agent/main.ts`: resume from `waiting`, raise the allowance by
+- [ ] T075 [US5] Implement `continue` in `src/agent/budget.ts` and `src/agent/main.ts`: resume from `waiting`, raise the allowance by
       `limits.continueIncrementUsd` only for a consumption stop, and record the new allowance
-- [ ] T074 [US5] Implement the decision-time permission re-check in `src/agent/permissions.ts` so a person demoted after the trigger can
+- [ ] T076 [US5] Implement the decision-time permission re-check in `src/agent/permissions.ts` so a person demoted after the trigger can
       no longer halt, retry, continue, approve or reject (FR-025), including the explanation in the thread
-- [ ] T075 [US5] Implement `status` and `help` in `src/agent/commands.ts` as informational replies that never change state and never
+- [ ] T077 [US5] Implement `status` and `help` in `src/agent/commands.ts` as informational replies that never change state and never
       create a decision record
-- [ ] T076 [P] [US5] Write `tests/integration/halt-boundary.test.ts`: halt during a turn produces `abort`
+- [ ] T078 [P] [US5] Write `tests/integration/halt-boundary.test.ts`: halt during a turn produces `abort`
       only after `turn_end`, is preceded by the feedback comment, and no steering/follow-up is queued at
-      abort time (after T068–T071)
-- [ ] T077 [US5] Validate scenarios S5 and S6 of `quickstart.md` (halt, queued retry, demoted account)
+      abort time (after T070–T073)
+- [ ] T079 [US5] Validate scenarios S5 and S6 of `quickstart.md` (halt, queued retry, demoted account)
 
 **Checkpoint**: there is a working emergency brake reachable through the only interface.
 
@@ -351,30 +374,30 @@ account without write access and confirm it is ignored with an explanation.
 
 **Purpose**: hardening and end-to-end verification across all stories.
 
-- [ ] T078 [P] Verify the egress restriction end to end: `.github/scripts/agent-egress.sh` runs before Pi,
+- [ ] T080 [P] Verify the egress restriction end to end: `.github/scripts/agent-egress.sh` runs before Pi,
       a request outside `network.allowHosts` fails, and a run whose restriction cannot be applied fails
       with `environment` without a model call (FR-034)
-- [ ] T079 [P] Add the output scan: every thread body and every committed file passes `redact.ts`, and a
+- [ ] T081 [P] Add the output scan: every thread body and every committed file passes `redact.ts`, and a
       post-commit scan aborts the proposal if a credential still matches (FR-018, SC-010)
-- [ ] T080 [P] Audit all message templates, commit messages, branch slugs and log lines for English-only
+- [ ] T082 [P] Audit all message templates, commit messages, branch slugs and log lines for English-only
       output, and run scenario S11 of `quickstart.md` with a non-English thread (constitution I,
       FR-019)
-- [ ] T081 [P] Verify SC-016 reporting in `src/agent/messages.ts`: the acknowledgement prints trigger time, run start and queue delay,
+- [ ] T083 [P] Verify SC-016 reporting in `src/agent/messages.ts`: the acknowledgement prints trigger time, run start and queue delay,
       and the delay is present for every run in a 20-run sample
-- [ ] T082 [P] Verify the no-retry guarantee in a real run via `src/agent/pi-session.ts` and `tests/integration/retry-signal.test.ts`: `auto_retry_start`, `summarization_retry_*`,
+- [ ] T084 [P] Verify the no-retry guarantee in a real run via `src/agent/pi-session.ts` and `tests/integration/retry-signal.test.ts`: `auto_retry_start`, `summarization_retry_*`,
       `compaction_*` and `willRetry` never pass silently, and a forced long conversation ends as
       `unexpected-retry` (FR-031)
-- [ ] T083 [P] Verify the injection boundary in `src/agent/pi-session.ts` and `.github/scripts/agent-egress.sh`: `GITHUB_TOKEN` absent from Pi's environment, `.git/config`
+- [ ] T085 [P] Verify the injection boundary in `src/agent/pi-session.ts` and `.github/scripts/agent-egress.sh`: `GITHUB_TOKEN` absent from Pi's environment, `.git/config`
       free of credentials, and a recorded S7 set of 10 hostile issues performed only the real request
       (SC-014)
-- [ ] T084 [P] Pin and audit dependencies in `package.json`: `@earendil-works/pi-coding-agent` exactly `1.4.0`, `npm audit`
+- [ ] T086 [P] Pin and audit dependencies in `package.json`: `@earendil-works/pi-coding-agent` exactly `1.4.0`, `npm audit`
       reviewed, and no new runtime dependency added (plan §Primary Dependencies)
-- [ ] T085 Run the full `quickstart.md` sequence S1–S14 once against a sandbox repository, including
+- [ ] T087 Run the full `quickstart.md` sequence S1–S14 once against a sandbox repository, including
       every negative variant and the human-only check S10 (third-party reconstruction from the issue
       alone), and record each expected outcome
-- [ ] T086 Compare the implementation against `plan.md` §"Design Decisions" and update the plan where the
+- [ ] T088 Compare the implementation against `plan.md` §"Design Decisions" and update the plan where the
       implementation legitimately diverged (no silent drift)
-- [ ] T087 Review `src/agent/**` and `tests/**` against the constitution: English identifiers and comments, no localization
+- [ ] T089 Review `src/agent/**` and `tests/**` against the constitution: English identifiers and comments, no localization
       leakage, and a note in the review that the language standard was checked
 
 ---
@@ -387,7 +410,7 @@ account without write access and confirm it is ignored with an explanation.
 - **Foundational (Phase 2)**: T009–T032, depends on T001/T002; **blocks all stories**.
 - **User stories (Phases 3–7)**: each depends on Phase 2 only. US2 additionally reuses the run lifecycle
   from US1 in practice, but its own deliverable (proposal + outcome) is testable against the stub.
-- **Polish (Phase 8)**: depends on the stories that exist; T085 needs all of them.
+- **Polish (Phase 8)**: depends on the stories that exist; T087 needs all of them.
 
 ### Story Dependencies
 
@@ -409,16 +432,16 @@ wiring before the quickstart scenario.
 - T010, T014, T016, T018 (unit tests once their modules exist).
 - T021, T023, T025, T027 (record and command primitives).
 - T031, T032 (accounting and budget tests).
-- After Phase 2: US1 can start while US3's reconciler (T056–T058) and US4's template enforcement
-  (T061–T062) proceed in parallel, since they touch different files.
-- In Polish: T078–T084 are largely independent verifications; T085–T087 close the loop.
+- After Phase 2: US1 can start while US3's reconciler (T058–T060) and US4's template enforcement
+  (T063–T064) proceed in parallel, since they touch different files.
+- In Polish: T080–T086 are largely independent verifications; T087–T089 close the loop.
 
 ---
 
 ## Parallel Example: User Story 1
 
 ```bash
-# After T033–T038 exist, these can run together:
+# After T033–T039 exist, these can run together:
 Task: "Write tests/integration/run-lifecycle.test.ts against tests/stub-pi.ts"
 Task: "Validate quickstart.md S1 in the sandbox repository"
 
@@ -435,7 +458,7 @@ Task: "Implement src/agent/budget.ts"
 
 1. Phase 1: T001–T008.
 2. Phase 2: T009–T032 — no story work before this checkpoint.
-3. Phase 3: T033–T040.
+3. Phase 3: T033–T041.
 4. **STOP and validate**: run S1 twice (answer-only request, and a request the agent cannot act on).
 5. The MVP already satisfies FR-001/002/003/004/005/019/020 and SC-001/002/006/016.
 
@@ -451,9 +474,9 @@ Task: "Implement src/agent/budget.ts"
 
 ### Suggested ordering inside US2/US5
 
-US2's T044 (no-merge guarantee) and US5's T070 (halt before anything reports `halted`) are the two tasks
+US2's T046 (no-merge guarantee) and US5's T072 (halt before anything reports `halted`) are the two tasks
 that must not be deferred: they are the safety properties the feature exists for. If the schedule slips,
-implement T044 and T070 before the remaining polish tasks.
+implement T046 and T072 before the remaining polish tasks.
 
 ---
 
@@ -461,22 +484,23 @@ implement T044 and T070 before the remaining polish tasks.
 
 | Requirement group | Tasks |
 |---|---|
-| FR-001/002/003/004/005/020 (issue-only interface, run, result) | T007, T012, T033–T040 |
-| FR-006/023 (do not redefine, stop on modified request) | T012, T035, T054 |
-| FR-007/008/009/033 (proposal, no self-merge, records, close) | T011, T041–T050 |
-| FR-010/011/012 (visible state, end states, failure reasons) | T020, T022, T051–T059 |
+| FR-001/002/003/004/005/020 (issue-only interface, run, result) | T007, T012, T033–T041 |
+| FR-006/023 (do not redefine, stop on modified request) | T012, T035, T037, T053 |
+| FR-007/008/009/033 (proposal, no self-merge, records, close) | T011, T042–T052 |
+| FR-010/011/012 (visible state, end states, failure reasons) | T020, T022, T053–T061 |
 | FR-013 (no concurrent runs) | T007, T019, T022 |
-| FR-014 (standing instructions, current version only) | T003, T004, T009, T060–T066 |
-| FR-015/026/027/028 (halt, command words, boundaries, feedback) | T024, T067–T077 |
-| FR-016/019 (record, English) | T015, T019, T020, T080 |
-| FR-017 (consumption limit) | T029, T030, T031, T032, T073 |
-| FR-018/034 (secrets, egress) | T006, T017, T042, T078, T079 |
-| FR-021/024/025 (credentials, permissions) | T011, T013, T074, T083 |
+| FR-014 (standing instructions, current version only) | T003, T004, T009, T062–T068 |
+| FR-015/026/027/028 (halt, command words, boundaries, feedback) | T024, T069–T079 |
+| FR-016/019 (record, English) | T015, T019, T020, T082 |
+| FR-017 (consumption limit) | T029, T030, T031, T032, T075 |
+| FR-018/034 (secrets, egress) | T006, T017, T043, T080, T081 |
+| FR-023 (stop on modified or withdrawn request) | T037, T020, T036 |
+| FR-021/024/025 (credentials, permissions) | T011, T013, T076, T085 |
 | FR-022 (existing issue trigger) | T012, T022, T034 |
-| FR-029/030 (content is data, directive report) | T004, T015, T026, T038, T083 |
-| FR-031/032 (no retry, lineage) | T028, T052, T072, T082 |
-| SC-002/SC-016 (ack latency, queue delay) | T036, T081 |
-| SC-003/SC-009/SC-014/SC-015 | T054, T070, T083, T012 |
+| FR-029/030 (content is data, directive report) | T004, T015, T026, T039, T085 |
+| FR-031/032 (no retry, lineage) | T028, T054, T074, T084 |
+| SC-002/SC-016 (ack latency, queue delay) | T036, T083 |
+| SC-003/SC-009/SC-014/SC-015 | T056, T072, T085, T012 |
 
 ---
 
