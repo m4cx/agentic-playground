@@ -70,7 +70,7 @@ change `approvalState`; the agent process cannot.
   appends the state row (FR-033). A branch is never reused after a close.
 - **Rejection is terminal for that proposal** — a rejected proposal is not amended or reopened
   automatically (US2 scenario 3).
-- **Redaction before commit** — file contents pass through `redact.js`; a detected credential aborts
+- **Redaction before commit** — file contents pass through `redact.ts`; a detected credential aborts
   the proposal, posts the failure enum `secret-request`, and commits nothing (FR-018).
 - **Conflict** — if the default branch moved such that the proposal cannot be created cleanly, the
   run fails with `content-conflict` and the thread names the diverging paths (edge case in spec).

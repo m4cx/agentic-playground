@@ -24,15 +24,16 @@ main line can only change through a reviewed pull request.
 
 ## Technical Context
 
-**Language/Version**: Node.js 22.19+ (ESM, no build step, JSDoc type annotations checked with
-`tsc --noEmit`); workflow definitions in GitHub Actions YAML; agent behaviour in Markdown
-instructions.
+**Language/Version**: TypeScript 5.x on Node.js 22.19+, ESM, `strict` mode, compiled with `tsc` to
+`dist/` (no bundler and no runtime transpiler); workflow definitions in GitHub Actions YAML; agent
+behaviour in Markdown instructions.
 
 **Primary Dependencies**: `@earendil-works/pi-coding-agent` pinned to the exact version used locally
 (1.4.0), consumed through its documented RPC wire protocol. The repository's own Spec Kit prompt
 templates are loaded as Pi prompt templates from an explicit allowlist, so a feature-sized issue can
-be worked with this repository's `specify` → `plan` → `tasks` workflow. No other runtime
-dependencies: GitHub access uses the Node built-in `fetch`, tests use `node:test`.
+be worked with this repository's `specify` → `plan` → `tasks` workflow. Development dependencies are
+`typescript` and `@types/node` only. No other runtime dependencies: GitHub access uses the Node
+built-in `fetch`, tests use `node:test`, and the build is plain `tsc`.
 
 **Storage**: No database. Authoritative state lives in the repository: issue labels mirror the run
 state, the append-only state log inside the issue's status comment is the state timeline, issue
@@ -40,10 +41,12 @@ comments carry the audit record and agent feedback, pull requests carry proposed
 Pi session file is cached between runs as a best-effort continuity aid, keyed on the issue number and
 the configuration fingerprint, and is never authoritative.
 
-**Testing**: `node:test` unit tests for command parsing, permission gating, state transitions,
-budget accounting, redaction, and proposal payloads; a stub RPC peer (JSONL over stdio) for
-orchestrator tests that need a Pi-shaped event stream; scripted end-to-end scenarios in
-`quickstart.md` against a sandbox repository.
+**Testing**: `node:test` unit tests written in TypeScript for command parsing, permission gating,
+state transitions, budget accounting, redaction, and proposal payloads; a stub RPC peer (JSONL over
+stdio) for orchestrator tests that need a Pi-shaped event stream; scripted end-to-end scenarios in
+`quickstart.md` against a sandbox repository. Tests are compiled by the same `tsconfig.json` and run
+from the build output (`node --test dist/tests`), so the code under test is exactly the code that
+runs in the workflow.
 
 **Target Platform**: GitHub-hosted ephemeral Ubuntu runner (`ubuntu-24.04`), triggered by `issues` and
 `issue_comment` events for work, by `pull_request` (`closed`, `review` states) for proposal outcomes and
@@ -57,8 +60,11 @@ that lives inside the repository it operates on.
 trigger-to-start delay recorded per run (SC-016); halt honoured within 5 minutes (SC-009); small request
 end to end within 10 minutes (SC-001); one run per issue at a time (FR-013).
 
-**Constraints**: Pi version and model ID pinned in `.agent/config.yml` (`contracts/config.md` is the
-single configuration schema); per-issue consumption limit with a soft warning and a hard stop
+**Constraints**: TypeScript `strict` mode, no implicit `any`, no `@ts-ignore` (an unavoidable
+suppression carries a comment naming the reason); `dist/` is build output and is never committed; the
+workflow installs and builds before the agent starts, cached with `setup-node`. Pi version and model ID
+pinned in `.agent/config.yml` (`contracts/config.md` is the single configuration schema); per-issue
+consumption limit with a soft warning and a hard stop
 (FR-017); hard job timeout well below the platform's 6-hour ceiling; the orchestrator alone holds
 `issues: write`, `contents: write`, and `pull_requests: write`; Pi never receives a repository
 credential; all agent-authored content in English (constitution, FR-019).
@@ -117,69 +123,72 @@ specs/001-issue-driven-agent-workflow/
 ### Source Code (repository root)
 
 ```text
+package.json                  # ESM, engines >=22.19, scripts: build, typecheck, test
+tsconfig.json                 # strict, module nodenext, rootDir ., outDir dist
 .github/
-└── workflows/
-    ├── agent-run.yml        # issues: opened/labeled → acknowledge, then start a run
-    ├── agent-command.yml    # issue_comment → halt/retry/continue/approve/reject
-    ├── agent-proposal.yml   # pull_request: closed/review → outcome + review decisions
-    └── agent-sweep.yml      # schedule + workflow_dispatch → reconcile stuck runs
-
-.github/scripts/
-└── agent-egress.sh          # applies the network allowlist before Pi starts (FR-034)
+├── workflows/
+│   ├── agent-run.yml         # issues: opened/labeled → acknowledge, then start a run
+│   ├── agent-command.yml     # issue_comment → halt/retry/continue/approve/reject
+│   ├── agent-proposal.yml    # pull_request: closed/review → outcome + review decisions
+│   └── agent-sweep.yml       # schedule + workflow_dispatch → reconcile stuck runs
+└── scripts/
+    └── agent-egress.sh       # applies the network allowlist before Pi starts (FR-034)
 
 .agent/
-├── instructions.md          # Standing instructions appended to Pi's system prompt
-├── config.yml               # Single schema: model, thinking, tools, prompt templates, labels,
-│                            # limits, proposal bounds, global halt issue (contracts/config.md)
-└── README.md                # How a maintainer changes agent behaviour
+├── instructions.md           # Standing instructions appended to Pi's system prompt
+├── config.yml                # Single schema: model, thinking, tools, prompt templates, labels,
+│                             # limits, proposal bounds, global halt issue, egress allowlist
+└── README.md                 # How a maintainer changes agent behaviour
 
 src/agent/
-├── main.js                  # Entry point: event → dispatch (run, command, or sweep)
-├── events.js                # GitHub event payload → Trigger or command input
-├── config.js                # Load, validate, and fingerprint .agent/config.yml
-├── permissions.js           # Write-access gate and re-check at decision time
-├── labels.js                # Label state machine (transitions, invariants)
-├── commands.js              # Command-word parsing and validation
-├── thread.js                # Thread reading, message markers, idempotent posting
-├── messages.js              # English message templates (ack, status, feedback, result, failure,
-│                            # session, notice, outcome)
-├── state-log.js             # Append-only status rows, rewrite-without-loss, label reconciliation
-├── directive-report.js      # Parses the agent-ignored: block, renders the agent:notice message
-├── session-accounting.js    # Per-session consumption records and the per-issue sum
-├── budget.js                # Consumption accounting, soft warning, hard stop
-├── pi-session.js            # Pi RPC lifecycle: start, prompt, observe, abort at boundary
-├── halt-watch.js            # Polls the thread for commands while a run is active
-├── reconcile.js             # Sweep: interrupted runs, half-applied label changes
-├── workspace.js             # Repo state, branch creation, diff collection, commit
-├── proposal.js              # Pull request creation and linkage
-├── redact.js                # Secret/credential redaction before posting or committing
-└── github.js                # Thin REST client over global fetch
+├── main.ts                   # Entry point: event → dispatch (run, command, or sweep)
+├── events.ts                 # GitHub event payload → Trigger or command input
+├── config.ts                 # Load, validate, and fingerprint .agent/config.yml
+├── permissions.ts            # Write-access gate and re-check at decision time
+├── labels.ts                 # Label state machine (transitions, invariants)
+├── commands.ts               # Command-word parsing and validation
+├── thread.ts                 # Thread reading, message markers, idempotent posting
+├── messages.ts               # English message templates (ack, status, feedback, result, failure,
+│                             # session, notice, outcome)
+├── state-log.ts              # Append-only status rows, rewrite-without-loss, label reconciliation
+├── directive-report.ts       # Parses the agent-ignored: block, renders the agent:notice message
+├── session-accounting.ts     # Per-session consumption records and the per-issue sum
+├── budget.ts                 # Consumption accounting, soft warning, hard stop
+├── pi-session.ts             # Pi RPC lifecycle: start, prompt, observe, abort at boundary
+├── halt-watch.ts             # Polls the thread for commands while a run is active
+├── reconcile.ts              # Sweep: interrupted runs, half-applied label changes
+├── workspace.ts              # Repo state, branch creation, diff collection, commit
+├── proposal.ts               # Pull request creation, review and close observation
+├── redact.ts                 # Secret/credential redaction before posting or committing
+└── github.ts                 # Thin REST client over global fetch
 
 tests/
 ├── fixtures/
-│   ├── events/              # Captured GitHub event payloads
-│   └── rpc/                 # Recorded Pi RPC event streams
-├── stub-pi.js               # Fake Pi RPC peer for orchestrator tests
+│   ├── events/               # Captured GitHub event payloads
+│   └── rpc/                  # Recorded Pi RPC event streams
+├── stub-pi.ts                # Fake Pi RPC peer for orchestrator tests
 ├── unit/
-│   ├── commands.test.js
-│   ├── permissions.test.js
-│   ├── labels.test.js
-│   ├── state-log.test.js     # Append-only rows, idempotent rewrite, I1/I2 reconciliation
-│   ├── budget.test.js
-│   ├── messages.test.js
-│   ├── redact.test.js
-│   ├── proposal.test.js
-│   ├── config.test.js        # Schema validation, fingerprint stability, fail-closed
-│   ├── templates.test.js     # Allowlist only; missing path fails before any model call
-│   ├── directive-report.test.js # none / list / missing / unparsable block handling
-│   ├── session-accounting.test.js # per-session records, issue total, cache loss does not reset
-│   └── reconcile.test.js     # Interrupted runs resolve; half-applied labels repaired
+│   ├── commands.test.ts
+│   ├── permissions.test.ts
+│   ├── labels.test.ts
+│   ├── state-log.test.ts       # Append-only rows, idempotent rewrite, I1/I2 reconciliation
+│   ├── budget.test.ts
+│   ├── messages.test.ts
+│   ├── redact.test.ts
+│   ├── proposal.test.ts
+│   ├── config.test.ts          # Schema validation, fingerprint stability, fail-closed
+│   ├── templates.test.ts       # Allowlist only; missing path fails before any model call
+│   ├── directive-report.test.ts # none / list / missing / unparsable block handling
+│   ├── session-accounting.test.ts # per-session records, issue total, cache loss does not reset
+│   └── reconcile.test.ts       # Interrupted runs resolve; half-applied labels repaired
 └── integration/
-    ├── run-lifecycle.test.js   # Trigger → ack → run → result, against the stub
-    ├── halt-boundary.test.js   # Halt honoured at the next action boundary
-    ├── budget-stop.test.js     # Limit reached → stop → explicit decision required
-    ├── retry-signal.test.js    # Any retry signal aborts and fails with unexpected-retry
-    └── proposal-outcome.test.js # Review decisions and pull-request close resolve the issue
+    ├── run-lifecycle.test.ts   # Trigger → ack → run → result, against the stub
+    ├── halt-boundary.test.ts   # Halt honoured at the next action boundary
+    ├── budget-stop.test.ts     # Limit reached → stop → explicit decision required
+    ├── retry-signal.test.ts    # Any retry signal aborts and fails with unexpected-retry
+    └── proposal-outcome.test.ts # Review decisions and pull-request close resolve the issue
+
+dist/                         # Build output of tsc; git-ignored, never committed
 ```
 
 **Structure Decision**: Single project. The repository currently holds only Spec Kit configuration,
@@ -188,6 +197,12 @@ flat `src/agent/` module set rather than layered directories because every modul
 piece of one process, and a deep tree would add navigation cost without adding a boundary. The
 workflow YAML stays in `.github/workflows/` (platform requirement) and agent behaviour stays in
 `.agent/` (reviewable content, not code).
+
+The source language is TypeScript with `strict` enabled, compiled by `tsc` into `dist/`; nothing runs
+through a transpiler at runtime and nothing is compiled on the fly. Tests live in the same `tsconfig`
+project and are executed from `dist/tests`, so a type error fails the build before the workflow reaches
+the agent, and the tests exercise the exact artifact that ships. `dist/` is git-ignored: the repository
+holds source, the job holds build output.
 
 ## Design Decisions Carried From Research
 
@@ -232,6 +247,9 @@ Full rationale and rejected alternatives are in [research.md](./research.md).
 13. **Directive reports are machine-checkable**: the agent ends its answer with an `agent-ignored:` block
     that the orchestrator parses and renders as an `agent:notice`; a missing block is recorded as missing
     rather than hidden (FR-030, research D14).
+14. **Language is TypeScript**: strict TypeScript compiled with `tsc` to `dist/`, not plain JavaScript and
+    not JSDoc-annotated JavaScript; tests are TypeScript too and run from the build output (research
+    D15).
 
 ## Decisions Carried From the Consistency Review
 

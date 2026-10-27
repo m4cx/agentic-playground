@@ -230,7 +230,7 @@ to push, comment, or merge from inside a tool call.
 **Alternatives considered**:
 - *GitHub App installation token*: more granular and independent of workflow runs, and the right
   move if the workflow later spans repositories or needs to act on behalf of a bot identity.
-  Deferred, not rejected — it is a drop-in replacement inside `github.js`.
+  Deferred, not rejected — it is a drop-in replacement inside `github.ts`.
 - *Personal access token*: violates FR-021 (tied to an individual) and never expires soon enough.
 
 ---
@@ -403,6 +403,49 @@ unusable. A directive the agent actually followed is a contract breach and is tr
 
 **Alternatives considered**: free prose (unverifiable), a dedicated tool (needs an extension, which D3
 forbids), post-hoc inspection of the model transcript (the orchestrator has no access to it).
+
+## D15 — Implementation language
+
+**Decision**: TypeScript 5.x, `strict` mode, ESM, compiled with `tsc` into `dist/`. Tests are TypeScript
+as well and run from the build output (`node --test dist/tests`). `typescript` and `@types/node` are the
+only development dependencies; `dist/` is git-ignored.
+
+**Rationale**: this is an unattended process that holds a repository token, decides permissions, enforces
+a spend limit, and builds commit messages — the code paths where a typo is expensive. Most of the domain
+is small, explicit data: command words, label transitions, thread markers, a config schema, and RPC events
+with documented shapes. TypeScript turns those into checked contracts instead of conventions, which is the
+same argument the design already makes for labels, fixed command words, and a single config schema. It
+also makes the RPC subset in `contracts/pi-rpc.md` enforceable: event and command payloads can be typed
+against the documented shapes instead of being parsed by hand into `unknown`.
+
+**Consequences to encode**:
+
+- A build step exists: `npm ci` and `npm run build` run in the job before Pi starts. That costs a few
+  seconds (cached by `setup-node`) and is a second thing that can fail — a build failure is reported as
+  `environment`, not as an agent failure.
+- Tests compile with the same `tsconfig`, so `node --test dist/tests` runs the shipped artifact. A
+  separate test-only configuration would let tests pass against code that no longer type-checks.
+- `dist/` never enters a commit, a diff, or a proposal. It is git-ignored and excluded from the diff
+  collection, alongside session files.
+- Strictness is a review rule, not a compiler flag alone: `noImplicitAny`, no `@ts-ignore` without a
+  stated reason, and no `any` in exported signatures (research D8/D9 remain: only the Pi package is a
+  runtime dependency).
+
+**Alternatives considered**:
+
+- *Plain JavaScript*: zero build step and the smallest possible surface, but no compile-time check on the
+  permission gate, the state machine, or the RPC payloads, and refactors rely on grep. Rejected by the
+  maintainer.
+- *JavaScript with JSDoc types checked by `tsc --noEmit`* (the previous plan): keeps the no-build property
+  and still type-checks, but the annotations live in comments, several constructs (generics over event
+  unions, discriminated unions for states, `satisfies`) are awkward or impossible, and the checked types
+  are not the ergonomic path, so they drift under time pressure.
+- *TypeScript executed through a loader or transpiler at runtime (`tsx`, `ts-node`, `--experimental-strip-types`)*:
+  removes the build step, but the process that runs then depends on a loader that can change behaviour
+  between versions, and Node's type stripping is still experimental and rejects enums and namespaces. The
+  strict build is the more predictable contract for an unattended job.
+- *TypeScript with a bundler (esbuild, tsup)*: convenient single-file output, but adds a dependency and a
+  second build configuration for a project of roughly twenty small modules. `tsc` is enough.
 
 ## Open items carried into Phase 1 (not clarifications, resolved here)
 

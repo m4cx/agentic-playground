@@ -77,7 +77,7 @@ require a decision, and one (F2) changes a success criterion.
 | F16 | Major | Recovery | Invariant I5 relies on "the scheduled sweep in `agent-run.yml`", but no schedule trigger, module, or test exists | labels.md I5, plan structure |
 | F18 | Major | Configuration | Config keys and the model's home are invented per document; no single schema exists | plan, data-model §8, proposal.md, commands.md, quickstart |
 | F19 | Major | Retry policy | "No automatic retry at any layer" cannot be achieved with `set_auto_retry` alone; compaction/overflow retries are separate | research D7, pi-rpc §Commands |
-| F23 | Major | Verification | Quickstart references `templates.test.js`, a scenario "S0", and "one run record" — none exist in the plan | quickstart, plan test tree |
+| F23 | Major | Verification | Quickstart references `templates.test.ts`, a scenario "S0", and "one run record" — none exist in the plan | quickstart, plan test tree |
 | F24 | Major | Governance | The committed constitution still carries the sync-impact report that says it must be removed before commit; it also claims "Deferred TODOs: None" while listing a deferred judgment call | `.specify/memory/constitution.md` |
 | F12 | Minor | State model | The ASCII diagram draws proposal/finished/failed transitions out of `halted`; `Run.outcome` lists `halted` under "terminal states only" | data-model §3, state machine |
 | F13 | Minor | Vocabulary | Spec words (accepted / in progress / waiting for decision) are never mapped to label names | spec FR-010, labels.md |
@@ -263,7 +263,7 @@ observation … or the scheduled sweep in `agent-run.yml`". The plan's workflow 
 "issues: opened/labeled", the target platform lists only `issues`, `issue_comment`,
 `pull_request_review`, and `src/agent/` has no reconcile module. Data-model V3 nonetheless depends on
 "a watchdog". Recommendation: add a `schedule:`/`workflow_dispatch` sweep (either in `agent-run.yml` or
-a separate `agent-sweep.yml`), a `reconcile.js`, a definition of the sweep window, idempotency with
+a separate `agent-sweep.yml`), a `reconcile.ts`, a definition of the sweep window, idempotency with
 normal event handling, and a test.
 
 **F18 — Configuration keys are invented per document.**
@@ -289,8 +289,8 @@ and accept that long runs fail, or define overflow recovery as a recorded attemp
 `summarization_retry_scheduled` and `willRetry` to the contract's violation signals either way.
 
 **F23 — The verification guide references artifacts that do not exist.**
-`quickstart.md` requires `tests/unit/templates.test.js`, which the plan's test tree does not list (the
-plan lists `messages.test.js` instead); S2 cites "unit test S0" and there is no S0; S9 asks for "one Pi
+`quickstart.md` requires `tests/unit/templates.test.ts`, which the plan's test tree does not list (the
+plan lists `messages.test.ts` instead); S2 cites "unit test S0" and there is no S0; S9 asks for "one Pi
 session and one run record", contradicting the decision that no run-record files are created. Also
 missing: tests for the reconciler (F16), for PR-review decisions (F15), and for the trigger vocabulary
 (F1). Recommendation: align quickstart with the plan's test tree, or extend the plan; replace "run
@@ -506,7 +506,8 @@ in the threat model.
 **Alternatives**: (a) `@octokit/rest`; (b) shelling out to `gh`; (c) plain `fetch` now, octokit when
 the surface grows.
 
-**Pros (chosen)**: no supply-chain surface in the one process that holds the token; no build step;
+**Pros (chosen)**: no supply-chain surface in the one process that holds the token; (at the time of
+this assessment) no build step — no longer true since revision 4, which introduced TypeScript;
 unit-testable against recorded responses; explicit request shaping.
 
 **Cons (chosen)**: pagination, conditional requests, secondary rate limits, and review-state edge
@@ -673,8 +674,8 @@ The maintainer answered the open questions on 2026-10-26. Answers are recorded i
 | End state of a proposal | Both: `waiting` is a resting state, and a closed pull request always resolves the issue | New FR-033, close transitions in `labels.md`, `agent:outcome`, `agent-proposal.yml`; FR-011, SC-003 and US3.2 reworded |
 | `/agent approve` | Bookkeeping only; the merge is the decision | `commands.md` rule 7, `proposal.md` guarantees |
 | Pull-request reviews | Count as approve/reject and are mirrored into the thread | `proposal.md` §"Decisions and their sources", review decisions in the data model |
-| Ignored directives | Machine-verifiable block at the end of the agent's answer | `thread-messages.md` §9, `directive-report.js`, research D14 |
-| Consumption across sessions | Every session documented separately; per-issue total is their sum | New Continuity Session entity, `agent:session` message, `session-accounting.js`, research D6 |
+| Ignored directives | Machine-verifiable block at the end of the agent's answer | `thread-messages.md` §9, `directive-report.ts`, research D14 |
+| Consumption across sessions | Every session documented separately; per-issue total is their sum | New Continuity Session entity, `agent:session` message, `session-accounting.ts`, research D6 |
 | Network egress | Restricted to the model provider endpoint | New FR-034, `network.allowHosts`, `agent-egress.sh`, `--offline`, research D10 |
 | Constitution cleanup | Yes, remove the leftover sync-impact report | `.specify/memory/constitution.md` 2.0.0 → 2.0.1, report removed |
 | Acknowledgement latency | Keep the promise inside the workflow's control: measure from run start and record the queue delay | SC-002 reworded, new SC-016, queue delay in the acknowledgement template (finding F20) |
@@ -698,17 +699,17 @@ them out:
 | F3 | Fixed | FR-026 vocabulary, clarification note, `commands.md` decision/informational split |
 | F4 | Fixed | US2.4, `commands.md` rule 7, `proposal.md` guarantees |
 | F5 | Fixed | US1 narrative and independent test |
-| F6 | Fixed | FR-030, `thread-messages.md` §9, `directive-report.js`, research D14 |
+| F6 | Fixed | FR-030, `thread-messages.md` §9, `directive-report.ts`, research D14 |
 | F7 | Fixed | `pi-rpc.md` §Continuity, `config.md` §Rules 5, `data-model.md` `fingerprint`, research D5, `quickstart.md` S14 |
-| F8 | Fixed | `thread-messages.md`, `data-model.md` §5/§10, `labels.md` I2, `state-log.js` + test |
-| F9 | Fixed | Continuity Session entity, `agent:session`, `session-accounting.js`, `pi-rpc.md` §Session accounting |
+| F8 | Fixed | `thread-messages.md`, `data-model.md` §5/§10, `labels.md` I2, `state-log.ts` + test |
+| F9 | Fixed | Continuity Session entity, `agent:session`, `session-accounting.ts`, `pi-rpc.md` §Session accounting |
 | F10 | Fixed | `data-model.md` `kind`, `thread-messages.md` §1/§2 |
 | F11 | Fixed | `data-model.md` durable-artifact column |
 | F12 | Fixed | `data-model.md` state machine and `outcome` row |
 | F13 | Fixed | `labels.md` §Vocabulary mapping |
 | F14 | Fixed | `labels.md` request-label lifecycle |
 | F15 | Fixed | `proposal.md` §"Decisions and their sources", `agent-proposal.yml` |
-| F16 | Fixed | `agent-sweep.yml`, `reconcile.js`, tests, `labels.md` I5 |
+| F16 | Fixed | `agent-sweep.yml`, `reconcile.ts`, tests, `labels.md` I5 |
 | F17 | Fixed | `plan.md` scale/scope, `labels.md` I6 |
 | F18 | Fixed | `contracts/config.md`, referenced everywhere; env overrides removed |
 | F19 | Fixed | `set_auto_compaction`, retry-signal detection, failure enum `unexpected-retry`, research D7 |
@@ -731,3 +732,19 @@ acknowledgement, so queue latency becomes a visible number instead of a hidden b
 that the one-job layout and the single-owner idempotency marker stay as they are.
 
 No open decision remains in this artifact set.
+
+### Revision 4 — implementation language (maintainer request)
+
+The plan originally specified JavaScript with JSDoc annotations checked by `tsc --noEmit`, keeping a
+no-build property. The maintainer asked for TypeScript instead, so the project is now strict TypeScript
+compiled by `tsc` into `dist/`, with tests written in TypeScript and executed from the build output.
+
+Where it landed: `plan.md` Technical Context (language, dependencies, testing, constraints), the source
+tree (`*.ts`, `package.json`, `tsconfig.json`, `dist/` ignored), decision 14, `research.md` D15 (with the
+four rejected alternatives), and `quickstart.md` (install, build, test).
+
+Consequences worth remembering: the job now has a build step that can fail (`npm ci`, `npm run build`,
+both cached; a build failure is `environment`, not an agent failure); the type checker runs on the tests
+too, so tests cannot pass against code that no longer compiles; and `dist/` must stay out of commits,
+diffs, and proposals. The "no build step" advantage recorded for D9 in §4 is superseded by this
+revision.

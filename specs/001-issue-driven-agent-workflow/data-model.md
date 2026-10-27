@@ -176,10 +176,10 @@ from the state labels: it is the *request* to work, not a state.
 |------|-------------|-------------------|
 | V1 | FR-024, FR-025 | Permission check at trigger and again at every decision; failure posts an explanation and changes nothing |
 | V2 | FR-013 | Concurrency group per issue plus an "active run" check against the state label before starting |
-| V3 | FR-011, FR-010 | Final state is written in the same step that posts the terminal comment; the reconciler (`src/agent/reconcile.js`, scheduled sweep) marks a run failed if the job dies leaving `agent:working` |
+| V3 | FR-011, FR-010 | Final state is written in the same step that posts the terminal comment; the reconciler (`src/agent/reconcile.ts`, scheduled sweep) marks a run failed if the job dies leaving `agent:working` |
 | V4 | FR-017 | Budget checked per boundary against the sum of documented sessions; hard stop posts the consumed amount and requires `continue` |
 | V5 | FR-016, FR-030 | Every message the orchestrator posts carries the run id, so the thread is self-describing |
-| V6 | FR-019, constitution I | All orchestrator-owned strings come from English templates in `messages.js`; agent output is redacted, not translated |
+| V6 | FR-019, constitution I | All orchestrator-owned strings come from English templates in `messages.ts`; agent output is redacted, not translated |
 | V7 | FR-029, FR-030 | Tool allowlist excludes any forge or git mutation tool; the agent must end its answer with the `agent-ignored:` block, which the orchestrator parses and renders as an `agent:notice` message; a missing block is recorded as "report missing" in the thread |
 | V8 | FR-023 | Request version (body hash) compared at run start and at each boundary; a change triggers stop-and-restate |
 | V9 | FR-031 | Any retry signal from the harness (`auto_retry_*`, `summarization_retry_*`, `compaction_*`, `willRetry`) aborts the run and fails it with `unexpected-retry` |

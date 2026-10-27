@@ -213,7 +213,7 @@ operation, so the thread and the label never disagree at a boundary.
 
 1. **English only** (constitution I, FR-019). Templates are fixed; only data is interpolated. The
    agent's own prose, when quoted, is quoted verbatim and never translated — and is redacted first.
-2. **No secrets** (FR-018): every interpolated value passes through `redact.js`; a body that still
+2. **No secrets** (FR-018): every interpolated value passes through `redact.ts`; a body that still
    matches a credential pattern is replaced by `[redacted]` and the run records that redaction
    happened.
 3. **Links, not copies**: artifacts are linked (PR, commit, workflow run) rather than pasted, so the

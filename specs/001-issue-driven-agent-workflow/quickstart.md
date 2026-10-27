@@ -14,7 +14,7 @@ machine's terminal beyond creating the issue.
      (default: `speckit.specify`, `speckit.plan`, `speckit.tasks` — an explicit list, not a glob)
    - `.github/workflows/agent-run.yml`, `agent-command.yml`, `agent-proposal.yml`, and `agent-sweep.yml`,
      plus `.github/scripts/agent-egress.sh`
-   - `src/agent/**` and `tests/**`
+   - `package.json`, `tsconfig.json`, `src/agent/**` (TypeScript) and `tests/**` (TypeScript)
 2. Repository settings:
    - Actions enabled; workflow token permissions set to **read** by default, with the two agent
      workflows declaring `issues: write`, `contents: write`, `pull_requests: write`.
@@ -30,40 +30,42 @@ machine's terminal beyond creating the issue.
 ## Local checks (no CI required)
 
 ```bash
-node --test tests/unit tests/integration
+npm ci
+npm run build      # tsc, strict; a type error stops here
+npm test           # node --test dist/tests
 ```
 
 Expected: all tests pass, and specifically:
 
-- `tests/unit/commands.test.js` — `/agent` mid-sentence and inside a code fence are *not* commands
+- `tests/unit/commands.test.ts` — `/agent` mid-sentence and inside a code fence are *not* commands
   ([contracts/commands.md](./contracts/commands.md) grammar).
-- `tests/unit/permissions.test.js` — write-access gate, and re-check at decision time.
-- `tests/unit/labels.test.js` — invariant I1 (one state label) and I3 (terminal stickiness).
-- `tests/unit/state-log.test.js` — status rows are appended and never rewritten; the newest row, the
+- `tests/unit/permissions.test.ts` — write-access gate, and re-check at decision time.
+- `tests/unit/labels.test.ts` — invariant I1 (one state label) and I3 (terminal stickiness).
+- `tests/unit/state-log.test.ts` — status rows are appended and never rewritten; the newest row, the
   `State:` line, and the label agree (invariant I2).
-- `tests/unit/budget.test.js` — soft warning at the configured ratio, hard stop at the cap.
-- `tests/unit/redact.test.js` — a credential-shaped string becomes `[redacted]`.
-- `tests/unit/proposal.test.js` — branch naming, and the client exposes **no** merge capability.
-- `tests/unit/config.test.js` — schema validation fails closed, and the configuration fingerprint changes
+- `tests/unit/budget.test.ts` — soft warning at the configured ratio, hard stop at the cap.
+- `tests/unit/redact.test.ts` — a credential-shaped string becomes `[redacted]`.
+- `tests/unit/proposal.test.ts` — branch naming, and the client exposes **no** merge capability.
+- `tests/unit/config.test.ts` — schema validation fails closed, and the configuration fingerprint changes
   when the instructions, model, thinking, tools, or template list change.
-- `tests/unit/templates.test.js` — only allowlisted templates are passed to Pi; a template path that
+- `tests/unit/templates.test.ts` — only allowlisted templates are passed to Pi; a template path that
   is missing or outside the repository fails config validation before any model call
   ([contracts/pi-rpc.md](./contracts/pi-rpc.md) §"Prompt templates").
-- `tests/unit/reconcile.test.js` — an interrupted run resolves to `failed`/`interrupted`, and a
+- `tests/unit/reconcile.test.ts` — an interrupted run resolves to `failed`/`interrupted`, and a
   half-applied state-label change is repaired.
-- `tests/unit/directive-report.test.js` — `agent-ignored: none`, a list, a missing block, and an
+- `tests/unit/directive-report.test.ts` — `agent-ignored: none`, a list, a missing block, and an
   unparsable block each produce the documented notice.
-- `tests/unit/session-accounting.test.js` — sessions are recorded individually, the issue total is their
+- `tests/unit/session-accounting.test.ts` — sessions are recorded individually, the issue total is their
   sum, and losing the cache does not reset the total.
-- `tests/integration/run-lifecycle.test.js` — against `tests/stub-pi.js`: trigger → ack → run →
+- `tests/integration/run-lifecycle.test.ts` — against `tests/stub-pi.ts`: trigger → ack → run →
   result comment + proposal.
-- `tests/integration/halt-boundary.test.js` — halt during a turn produces `abort` only after
+- `tests/integration/halt-boundary.test.ts` — halt during a turn produces `abort` only after
   `turn_end`, preceded by a feedback comment, and no steering or follow-up is queued at abort time.
-- `tests/integration/budget-stop.test.js` — limit reached stops at a boundary and requires
+- `tests/integration/budget-stop.test.ts` — limit reached stops at a boundary and requires
   `continue`.
-- `tests/integration/retry-signal.test.js` — a `summarization_retry_scheduled` or `willRetry` event
+- `tests/integration/retry-signal.test.ts` — a `summarization_retry_scheduled` or `willRetry` event
   aborts the run and fails it with `unexpected-retry`.
-- `tests/integration/proposal-outcome.test.js` — an approving review records a decision, and a closed
+- `tests/integration/proposal-outcome.test.ts` — an approving review records a decision, and a closed
   pull request resolves the issue to `finished` or `rejected`.
 
 ## End-to-end scenarios
@@ -233,16 +235,16 @@ the reduced tool set. The removed tool is not callable in the new run.
 | Symptom | Likely contract breach |
 |---------|------------------------|
 | Two status comments appear | `thread-messages.md` idempotency marker not applied |
-| A status row disappeared or was rewritten | `thread-messages.md` append-only row rule; `state-log.js` rewrite path |
+| A status row disappeared or was rewritten | `thread-messages.md` append-only row rule; `state-log.ts` rewrite path |
 | A `/speckit.*` command silently does nothing | Template not on the allowlist, or `--prompt-template` missing from the launch arguments (research D13) |
 | `auto_retry_start` in the job log | `pi-rpc.md` launch contract: `set_auto_retry false` not sent |
 | A resumed run uses a tool that was removed from the config | `contracts/config.md` fingerprint: session id or cache key not fingerprinted (research D5) |
 | Halt leaves a half-finished tool call | `pi-rpc.md` stop sequence: `abort` sent mid-turn instead of at `turn_end` |
 | Status label and thread disagree | `labels.md` invariant I2 |
-| An issue stays `agent:working` for hours | `agent-sweep.yml` not scheduled, or `reconcile.js` not handling the case (invariant I5) |
+| An issue stays `agent:working` for hours | `agent-sweep.yml` not scheduled, or `reconcile.ts` not handling the case (invariant I5) |
 | A run continues after a compaction/retry event | `pi-rpc.md` §Events: retry signal not treated as `unexpected-retry` (FR-031) |
-| No `agent:notice` after a run | agent did not emit the `agent-ignored:` block, or `directive-report.js` did not parse it (FR-030) |
+| No `agent:notice` after a run | agent did not emit the `agent-ignored:` block, or `directive-report.ts` did not parse it (FR-030) |
 | Issue stays `waiting` after the pull request is closed | `agent-proposal.yml` not subscribed to `pull_request: closed` (FR-033) |
-| Issue total restarts at zero after a cache miss | `agent:session` not posted per session, or `session-accounting.js` summing the current session only (FR-017) |
+| Issue total restarts at zero after a cache miss | `agent:session` not posted per session, or `session-accounting.ts` summing the current session only (FR-017) |
 | Acknowledgement later than 2 minutes after the run started | the acknowledgement template is not the first action of the run job (I4) |
 | Queue delay not printed in the acknowledgement | `startedAt` minus `Trigger.at` not rendered (SC-016) |
