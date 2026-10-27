@@ -17,20 +17,35 @@
 - Q: Should the agent be expected to resist instructions hidden inside issue content, or is every permitted author fully trusted? → A: Issue content is treated as data, not as instructions: embedded directives that exceed the stated request or try to bypass approval, cost limits, or secret handling are ignored and reported in the thread.
 - Q: Where must the durable record of a run live — only in the issue thread, or also as files committed into the repository? → A: The issue thread is the durable record; artifacts the work produces (proposal, files) are its evidence, and no separate run-record files are committed.
 - Q: When a run fails partway through, should the system try again on its own? → A: No automatic retry; a run that fails ends in the failed state, and only an explicit retry command from a permitted person starts another attempt.
+- Note (2026-10-26, consistency review): the command words recorded in the second answer are superseded by FR-026, which adds `reject` to the decision set and classifies `status` and `help` as informational. The underlying decision — that no consequential effect depends on interpreting prose — is unchanged. Rationale in [consistency-and-decision-review.md](./consistency-and-decision-review.md), finding F3.
+
+### Session 2026-10-26 (consistency review resolution)
+
+Answers given by the maintainer to the findings of
+[consistency-and-decision-review.md](./consistency-and-decision-review.md).
+
+- Q: May the agent harness retry internally when a run hits a context or provider limit? → A: No. Recovery retries inside the harness count as automatic retries: they are disabled where possible and, where they cannot be disabled, detected and ended as a failed run.
+- Q: How does an issue end after its proposal is merged or closed? → A: Merging resolves it to finished; closing without merging resolves it to rejected. Waiting for a human decision stays a legitimate resting state.
+- Q: Is `/agent approve` a gate of its own? → A: No. It records a note; the merge is the human decision that lets a change take effect.
+- Q: Does a pull-request review count as a decision? → A: Yes. An approving or a changes-requested review counts as approve or reject and is recorded in the issue thread.
+- Q: How is an ignored directive reported? → A: In a machine-verifiable report at the end of the agent's answer, including an explicit statement when no embedded directive was found.
+- Q: How is consumption accounted for across resumed runs? → A: Every session is documented separately on the issue, and the per-issue total is the sum of those documented values, so a lost cache cannot reset the limit.
+- Q: May the agent process reach the open internet? → A: No. Its network access is limited to the model provider endpoint.
+- Q: How is the acknowledgement promise kept honest when the platform's runner queue delays the job? → A: SC-002 is measured from the start of the run, and the delay between trigger and run start is recorded in the thread for every run, so queue latency is visible instead of silently breaking the promise.
 
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Request agent work from an issue and receive the result in the same thread (Priority: P1)
 
-A requester opens an issue in the repository describing a task (for example a bug to fix, a document to draft, or a question about the codebase). Without installing anything or using a terminal, the requester signals that the agent should work on this issue. The agent picks the issue up, performs the work, and reports its result back as a reply in the issue thread, so the entire exchange is readable in the repository.
+A requester opens an issue in the repository describing a task (for example a bug to fix, a document to draft, or a question about the codebase). Without installing anything or using a terminal, a person with write access marks the issue so that the agent works on it — the requester themself when they hold that access, otherwise a maintainer acting on the request. The agent picks the issue up, performs the work, and reports its result back as a reply in the issue thread, so the entire exchange is readable in the repository.
 
 **Why this priority**: This is the core value of the feature. Everything else (approval, progress reporting, configuration) only makes sense once a requester can hand a task to the agent and read the outcome in the issue thread. Delivered alone, it already replaces the local terminal session completely.
 
-**Independent Test**: Open a new issue with a small, self-contained request, mark it for agent handling, and confirm that the agent's answer appears as a comment in that issue without any local execution taking place.
+**Independent Test**: Open a new issue with a small, self-contained request, mark it for agent handling from a write-access account, and confirm that the agent's answer appears as a comment in that issue without any local execution taking place.
 
 **Acceptance Scenarios**:
 
-1. **Given** an open issue that is marked for agent handling, **When** the requester submits it, **Then** the issue receives an acknowledgement comment stating that the work was accepted and is being processed.
+1. **Given** an open issue that a permitted person marks for agent handling, **When** the marking takes effect, **Then** the issue receives an acknowledgement comment stating that the work was accepted and is being processed.
 2. **Given** an issue that the agent has finished processing, **When** the requester opens the issue, **Then** a comment from the agent states the outcome, the actions taken, and links to every artifact it produced.
 3. **Given** an issue that is not marked for agent handling, **When** anyone comments on it, **Then** the agent does not start work and does not consume any capacity.
 4. **Given** an issue handled by the agent, **When** the requester reads the thread, **Then** no step of the work requires the requester to run anything on their own machine.
@@ -50,7 +65,7 @@ When the agent's work results in changes to repository content, those changes ar
 1. **Given** an issue whose work produces content changes, **When** the agent finishes, **Then** the issue thread contains a link to a reviewable proposal containing exactly the changes the agent made.
 2. **Given** an unreviewed proposal produced by the agent, **When** nobody has approved it, **Then** the main line of the repository remains unchanged.
 3. **Given** a rejected proposal, **When** the rejection is recorded, **Then** the agent does not retry the same changes unless a human explicitly asks for another attempt, and the rejection reason is captured in the issue thread.
-4. **Given** an approved proposal, **When** it is accepted, **Then** the issue thread records who approved it and at what point in time.
+4. **Given** a proposal, **When** a permitted person approves it, merges it, or closes it without merging, **Then** the issue thread records that person and the point in time, and the issue reaches a state that reflects the outcome.
 
 ---
 
@@ -65,7 +80,7 @@ A requester returns to an issue hours later and wants to know what happened. The
 **Acceptance Scenarios**:
 
 1. **Given** work in progress on an issue, **When** the requester checks the issue, **Then** the current state is visible without asking a follow-up question.
-2. **Given** work that has ended, **When** the requester checks the issue, **Then** the state is one of the terminal states (finished, failed, or rejected) and never remains in progress.
+2. **Given** work that has ended, **When** the requester checks the issue, **Then** the state is either a terminal state (finished, failed, or rejected) or an explicit wait for a named human decision, and never "in progress".
 3. **Given** work that failed, **When** the requester reads the issue, **Then** the failure reason and whether a retry is sensible are stated in plain language.
 
 ---
@@ -134,7 +149,7 @@ A maintainer who notices unwanted behaviour can halt the agent using only the is
 - **FR-008**: The system MUST never merge, publish, or otherwise finalize repository changes on its own initiative.
 - **FR-009**: The system MUST record, in the issue thread, the identity of the person whose action started the work and of the person who approved or rejected its result.
 - **FR-010**: The system MUST expose the state of the work (accepted, in progress, waiting for decision, finished, failed, halted, rejected) in the issue thread at all times.
-- **FR-011**: The system MUST ensure that work which ended for any reason is not left in a non-terminal state in the thread.
+- **FR-011**: The system MUST ensure that every run ends in a recorded end state, that no issue stays in the working or queued state without activity for 24 hours, and that a proposal which is closed always resolves its issue to a terminal state.
 - **FR-012**: The system MUST record a failure reason in the thread whenever work cannot be completed, distinguishing causes the requester can act on from causes they cannot.
 - **FR-013**: The system MUST prevent two concurrent runs for the same issue.
 - **FR-014**: The system MUST honour documented standing instructions stored in the repository as the agent's behavioural configuration, and MUST apply the currently committed version to new work only.
@@ -149,24 +164,27 @@ A maintainer who notices unwanted behaviour can halt the agent using only the is
 - **FR-023**: The system MUST stop acting on an issue whose request was modified or withdrawn after work started, and MUST restate the version of the request it acted on.
 - **FR-024**: The system MUST determine who is permitted to start, halt, and approve work from repository permissions: only people with write (push) access or higher are permitted, and actions by anyone else MUST be ignored with an explanation in the thread.
 - **FR-025**: The system MUST re-check a person's permission at the moment each decision is recorded, so that a person who loses write access after starting work can no longer halt or approve it.
-- **FR-026**: The system MUST start work only in response to the repository label that marks an issue for agent handling, and MUST treat halt, retry, continue, and approve as fixed command words posted by a permitted person, so that no consequential decision depends on the agent interpreting free text.
+- **FR-026**: The system MUST start new work only in response to the repository label that marks an issue for agent handling, applied by a permitted person, and MUST accept only `retry` and `continue` as the further entry points that continue an existing recorded request. It MUST treat `halt`, `retry`, `continue`, `approve`, and `reject` as fixed command words posted by a permitted person, so that no consequential decision depends on the agent interpreting free text; `status` and `help` MAY exist as informational commands that never change state.
 - **FR-027**: The system MUST NOT interrupt an action that is already in flight when a halt, retry, or continue command arrives; the command MUST take effect at the next action boundary.
 - **FR-028**: Before reporting an issue as halted or paused, the system MUST post feedback in the thread stating what was completed, what was left undone, and what state the work ended in, so a later run can resume without redoing finished steps.
 - **FR-029**: The system MUST treat all issue-thread content as data describing a request, not as instructions to itself, and MUST NOT follow embedded directives that exceed the stated request or that would relax the approval gate, the consumption limit, the permission rules, or the secrecy rules.
-- **FR-030**: Whenever the system ignores an embedded directive, it MUST state in the thread that the directive was not followed and why, without repeating any secret value or restating the directive as an instruction.
-- **FR-031**: The system MUST NOT retry a failed or interrupted run on its own; every attempt after the first MUST be started by an explicit retry command from a permitted person, so that a failure never silently multiplies consumption.
+- **FR-030**: Whenever the system ignores an embedded directive, it MUST report that in the thread in a machine-verifiable form, naming which directive was not followed and why, without repeating any secret value or restating the directive as an instruction, and MUST state explicitly when no embedded directive was found.
+- **FR-031**: The system MUST NOT retry a failed or interrupted run on its own at any layer, including recovery the agent harness performs internally; every attempt after the first MUST be started by an explicit retry command from a permitted person, so that a failure never silently multiplies consumption.
 - **FR-032**: A run started by a retry command MUST record which earlier run it continues, so that the thread shows the sequence of attempts on one request.
+- **FR-033**: The system MUST observe the outcome of a proposal — merged, or closed without being merged — and MUST record it and the person responsible in the issue thread, resolving the issue to a terminal state.
+- **FR-034**: The system MUST restrict the network access of the agent process to the model provider endpoint or endpoints its work requires, so that hostile issue content cannot exfiltrate credentials or repository content.
 
 ### Key Entities *(include if feature involves data)*
 
 - **Work Request**: The task expressed by a person in an issue; carries the request text, the request version that was acted on, the requesting person, and the requested kind of outcome.
-- **Trigger**: The explicit signal in the repository that a work request should be handled; is either the agent-handling label or a decision command word; has an origin (new issue, existing issue, or command), an originating person, and a point in time.
+- **Trigger**: The explicit signal in the repository that a work request should be handled; is either the agent-handling label, a retry command, or a continue command; has an origin (label, retry command, or continue command), an originating person, and a point in time.
 - **Run**: One attempt by the agent to fulfil a work request; has a state, start and end points in time, the instruction set version it used, the actions it took, its consumption, its outcome, and, when started by a retry command, the earlier run it continues.
 - **Action Boundary**: The point between two discrete steps of a run at which a pending command takes effect; no action is abandoned mid-execution at a boundary.
 - **Status Update**: The visible record of a run's state in the issue thread; has a state, a point in time, and the version of the request it refers to.
 - **Proposed Change**: A reviewable proposal of repository content changes produced by a run; has a scope of changed content, a link to its originating issue, and an approval state.
 - **Decision**: A human approval, rejection, halt, retry, or continue; has a deciding person, a point in time, a reason, the object it applies to, and the action boundary at which it took effect.
 - **Standing Instruction**: The repository-stored configuration that governs what the agent may do and how; has a version, an effective date, and a content scope.
+- **Continuity Session**: One agent conversation belonging to a single issue and a single configuration version; has an identity, the runs it served, the consumption it accumulated, and a reason for ending. Its documented consumption is what the per-issue limit is summed from.
 - **Audit Entry**: The record in the issue thread, with the proposals and files it links to, that lets the history of an issue be reconstructed without consulting anything outside the repository.
 
 ## Success Criteria *(mandatory)*
@@ -174,8 +192,8 @@ A maintainer who notices unwanted behaviour can halt the agent using only the is
 ### Measurable Outcomes
 
 - **SC-001**: A person can go from opening an issue to reading a substantive agent result in that issue thread without using a terminal or installing anything, end to end in under 10 minutes for a small request.
-- **SC-002**: 100% of accepted work requests receive an acknowledgement in the thread within 2 minutes of being triggered.
-- **SC-003**: 100% of finished runs end in a clearly stated terminal state in the thread; zero issues are left in a non-terminal state 24 hours after their last activity.
+- **SC-002**: 100% of accepted work requests receive an acknowledgement in the thread within 2 minutes of the run starting.
+- **SC-003**: 100% of finished runs end in a clearly stated end state in the thread; zero issues are left queued or working 24 hours after their last activity; and 100% of issues whose proposal is closed are resolved to finished or rejected.
 - **SC-004**: 100% of repository changes made by the agent pass through a human decision before taking effect, verified by auditing a sample of at least 20 changes.
 - **SC-005**: A third party unfamiliar with the workflow can reconstruct, from the repository alone, what happened to any randomly chosen handled issue within 5 minutes and without asking anyone.
 - **SC-006**: The number of people required to have tooling installed on their own machine to use the workflow is zero.
@@ -188,12 +206,14 @@ A maintainer who notices unwanted behaviour can halt the agent using only the is
 - **SC-013**: In 100% of halted runs, the following run resumes without repeating an already completed step, verified over the first 20 halts.
 - **SC-014**: In 100% of a test set of at least 10 issues that deliberately embed directives aimed at the agent, the agent performs only the stated request, relaxes none of the approval, consumption, permission, or secrecy rules, and names the ignored directive in the thread.
 - **SC-015**: Zero runs are started without an explicit trigger or retry command, verified by auditing the trigger origin of every run over a 30-day period.
+- **SC-016**: The delay between the trigger and the start of its run is recorded in the issue thread for 100% of runs, so that platform queueing is visible and reviewable instead of hiding inside the acknowledgement promise.
 
 ## Assumptions
 
 - **Audience**: The initial users are maintainers and contributors who already have access to the repository and are comfortable expressing tasks in issue text; they are not expected to have any engineering tooling on their own machine.
 - **Platform**: GitHub Issues and the surrounding repository features are the only interaction surface; no separate chat interface, email channel, or terminal tool is part of this feature.
 - **Execution environment**: A hosted, always-available environment separate from any contributor's machine performs the work. The concrete choice of that environment is an implementation decision and is out of scope for this specification.
+- **Network policy**: the agent process can reach only the model provider endpoint it needs; every other outbound connection from that process is blocked, so credential exfiltration through the agent's shell is out of reach rather than merely detectable.
 - **Identity and permissions**: The set of people allowed to start, halt, and approve work is derived from the existing repository permission level "write (push) access and above", not from a new identity system built by this feature. Read-only contributors and outside commenters can read everything in the issue thread but cannot drive the agent.
 - **Approval discipline**: The agent is treated as a contributor without merge rights; protecting the main line and requiring review remain the repository owner's responsibility and are assumed to stay enabled.
 - **Single repository**: The workflow operates on the current repository only; multi-repository orchestration is out of scope.

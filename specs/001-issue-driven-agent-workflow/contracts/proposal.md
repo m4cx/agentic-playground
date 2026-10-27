@@ -41,19 +41,41 @@ agent/<issue-number>-<slug>
 The issue thread post links the pull request and states the same "what a human must do next" line
 (see `contracts/thread-messages.md` §4).
 
+## Decisions and their sources
+
+| Source | Event | Decision | Thread record |
+|--------|-------|----------|---------------|
+| Command | `issue_comment` starting with `/agent` | `halt`, `retry`, `continue`, `approve`, `reject` | `agent:decision` |
+| Review | `pull_request_review` submitted | `approve` (approved) or `reject` (changes requested) | `agent:decision`, source `review` |
+| Merge | `pull_request.closed`, `merged: true` | `merge` — the decision that lets the change take effect | `agent:outcome` and `agent:decision` |
+| Close | `pull_request.closed`, `merged: false` | `close` — the change is not applied | `agent:outcome` and `agent:decision` |
+
+Every source re-checks the actor's write access at the moment it is recorded (FR-025); a review or a
+merge by a person without write access is recorded as ignored, not as a decision. Only these sources can
+change `approvalState`; the agent process cannot.
+
 ## Guarantees
 
 - **No merge, ever** — the orchestrator holds no merge call at all, not merely a disabled flag
   (FR-008). Verified by a unit test asserting the client exposes no merge endpoint.
-- **Approval is recorded, not applied** — `/agent approve` (or a GitHub review) records the decision
-  and labels the proposal; the merge button stays human (FR-009).
+- **The merge is the gate, `/agent approve` is a note** — no command and no review applies a change;
+  only a human merge does (FR-007, FR-008). `/agent approve` records an intention in the thread and
+  labels the proposal, and is never required before a merge: a missing approval command never blocks a
+  merge, and an approval command never causes one.
+- **Reviews are decisions** — an approving review counts as `approve`, a changes-requested review as
+  `reject`; both are mirrored into the issue thread with actor and timestamp, because the thread is the
+  record (FR-009).
+- **Closing resolves the issue** — on `pull_request.closed` the orchestrator records whether the change
+  was merged and by whom, sets the issue to `finished` (merged) or `rejected` (closed without merge), and
+  appends the state row (FR-033). A branch is never reused after a close.
 - **Rejection is terminal for that proposal** — a rejected proposal is not amended or reopened
   automatically (US2 scenario 3).
 - **Redaction before commit** — file contents pass through `redact.js`; a detected credential aborts
   the proposal, posts the failure enum `secret-request`, and commits nothing (FR-018).
 - **Conflict** — if the default branch moved such that the proposal cannot be created cleanly, the
   run fails with `content-conflict` and the thread names the diverging paths (edge case in spec).
-- **Bounded diff** — a diff larger than `config.yml#maxChangedPaths` or `#maxDiffLines` fails the run
-  with `request-too-large` instead of producing an unreviewable proposal.
+- **Bounded diff** — a diff larger than `config.yml#proposal.maxChangedPaths` or
+  `config.yml#proposal.maxDiffLines` fails the run with `request-too-large` instead of producing an
+  unreviewable proposal (`contracts/config.md`).
 - **Repository-only artifacts** — the proposal contains the work, not bookkeeping: no run logs, no
   session files, no agent metadata files (spec clarification: the thread is the record).

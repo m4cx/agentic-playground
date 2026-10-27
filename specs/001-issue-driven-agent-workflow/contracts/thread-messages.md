@@ -10,15 +10,18 @@ thread is the record (FR-016), so its shape is a contract, not a formatting pref
 Each message body begins with an HTML comment that is invisible when rendered:
 
 ```text
-<!-- agent:status run=<runId> state=<state> -->
+<!-- agent:status issue=<number> -->
 ```
 
 Rules:
 
-- `agent:status` — exactly one per issue. Posted once, then **edited** on every state change. This
-  keeps the thread readable (one live status line) while the comment's edit history is the record.
-- `agent:ack`, `agent:feedback`, `agent:result`, `agent:decision`, `agent:error`, `agent:limit` —
-  appended once each, never edited.
+- `agent:status` — exactly one per issue. Posted once, then **rewritten from an append-only row list**
+  on every state change: each transition adds a row and no earlier row is ever removed or altered. The
+  body therefore carries the full state timeline, so the thread stays readable *and* reconstructable
+  without relying on comment edit history, which the platform does not expose (FR-016, SC-005).
+- `agent:ack`, `agent:feedback`, `agent:result`, `agent:decision`, `agent:error`, `agent:limit`,
+  `agent:session`, `agent:notice`, `agent:outcome` — appended once each, never edited. Every one of them
+  names the run id or the session id.
 - A template is rendered only if no message with the same `marker + runId + kind` exists, which makes
   re-delivery of the same event harmless.
 
@@ -29,16 +32,20 @@ Rules:
 ```markdown
 Agent run started.
 
-- Triggered by: @<actor> (<origin>)
+- Triggered by: @<actor> (<origin>) at <timestamp>
+- Run started: <timestamp> — queue delay `<n>` seconds (SC-016)
 - Request version: <hash-short>
-- Instructions: `<path>` at `<sha-short>`
-- Model: `<modelId>` (Pi `<version>`)
-- Allowance for this issue: `<remaining>` of `<cap>`
+- Instructions: `<path>` at `<sha-short>` (configuration fingerprint `<fingerprint-short>`)
+- Model: `<modelId>` (Pi `<version>`), thinking `<level>`
+- Allowance for this issue: cap `<cap>`; consumption recorded in this thread before this run `<value-or-unknown>`
 
 I will report the outcome here. Decisions use `/agent <word>`; send `/agent help` for the list.
 ```
 
-### 2. Status (`agent:status`) — edited in place (FR-010)
+The acknowledgement is posted before any model call, so it cannot contain the request classification
+(`change`/`answer`); that appears in the first status row instead (see §2).
+
+### 2. Status (`agent:status`) — append-only state log, rewritten from its own rows (FR-010)
 
 ```markdown
 **State:** `<state>` — <one-line plain-language meaning>
@@ -50,7 +57,20 @@ I will report the outcome here. Decisions use `/agent <word>`; send `/agent help
 | Consumed | `<cost>` of `<cap>` (`<turns>` turns) |
 | Proposal | <link or `none`> |
 | Next act needed | <`none` / `post /agent continue` / review the proposal> |
+
+**State log**
+
+| At | State | Run | Consumed | Next act |
+|----|-------|-----|----------|----------|
+| <timestamp> | `queued` | `<runId>` | 0 | none |
+| <timestamp> | `working` | `<runId>` | 0 | none |
+| <timestamp> | `waiting` | `<runId>` | `<cost>` | review the proposal |
 ```
+
+Row rules: one row per transition; rows are appended in chronological order and never rewritten; the
+newest row must equal the `State:` line and the state label (invariant I2); the log is the authoritative
+state timeline for reconstruction. Rows record only values the orchestrator observed — a missing
+consumption figure is written as `unknown`, never guessed.
 
 The `Next act needed` cell is what removes the "what is the status?" follow-up question (SC-007).
 
@@ -105,7 +125,11 @@ Consumed: `<cost>`. Retry with `/agent retry` if the reason is on your side.
 ```
 
 Failure enum: `request-unclear`, `request-too-large`, `needs-permission`, `content-conflict`,
-`secret-request`, `limit-exceeded`, `environment`, `interrupted`, `agent-error`.
+`secret-request`, `limit-exceeded`, `environment`, `interrupted`, `unexpected-retry`, `agent-error`.
+
+`unexpected-retry` is used when the harness shows any sign of continuing on its own (`auto_retry_*`,
+`summarization_retry_*`, `compaction_*`, or `willRetry`). The run is stopped instead of continuing
+invisibly, and the thread says which signal was seen (FR-031).
 
 ### 6. Decision record (`agent:decision`) — (FR-009)
 
@@ -127,6 +151,64 @@ To continue, a person with write access posts `/agent continue`. That raises thi
 by `<increment>`. Nothing further happens until then.
 ```
 
+### 8. Session (`agent:session`) — per-session consumption (FR-017)
+
+```markdown
+Session ended.
+
+- Session: `<sessionId>` (fingerprint `<fingerprint-short>`)
+- Runs: `<run ids>`
+- Consumed: `<cost>` (`<tokens>` tokens, `<turns>` turns, `<toolCalls>` tool calls)
+- Ended because: <`run finished` / `run halted` / `run failed` / `cache lost`>
+- Issue total: `<sum>` of `<cap>`
+```
+
+One message per session, appended and never edited. The issue total is the sum of all documented
+sessions, so a new session adds to the record instead of replacing it, and a lost cache cannot reset the
+limit (decision in `spec.md` §Clarifications; `contracts/pi-rpc.md` §"Session accounting").
+
+### 9. Directive report (`agent:notice`) — FR-030
+
+The agent must end its answer with exactly one of these blocks:
+
+```text
+agent-ignored:
+- <short description of what the directive asked for> — <why it was not followed>
+```
+
+```text
+agent-ignored: none
+```
+
+The orchestrator extracts it, redacts it, and renders:
+
+```markdown
+Directive check.
+
+- <one line per ignored directive: what it asked for, and why it was not followed>
+
+or: `No embedded directive found.`
+```
+
+Rules: the block is data, never an instruction; the notice never repeats a secret value and never restates
+a directive as a command; a directive that the agent did follow by mistake is a contract breach reported
+as a failure. If the block is missing or unparsable, the orchestrator posts the notice with
+`No directive report was produced for this run.` and appends a state-log note. Absence is therefore
+recorded rather than hidden — this is what makes SC-014 auditable.
+
+### 10. Proposal outcome (`agent:outcome`) — FR-033
+
+```markdown
+Proposal closed.
+
+- Pull request: <link>
+- Result: <`merged by @<actor> at <timestamp>` / `closed without merge by @<actor> at <timestamp>`>
+- Issue state: <`finished` / `rejected`>
+```
+
+Posted once when the pull request is closed. The state label and a state-log row follow in the same
+operation, so the thread and the label never disagree at a boundary.
+
 ## Rules
 
 1. **English only** (constitution I, FR-019). Templates are fixed; only data is interpolated. The
@@ -139,6 +221,7 @@ by `<increment>`. Nothing further happens until then.
 4. **No raw tool output**: tool output is summarised by the agent; the orchestrator never dumps a
    log into the thread. Full logs remain in the workflow run for operators.
 5. **Reconstruction procedure** (for SC-005): read the issue body, then the `agent:ack` messages in
-   order, then each `agent:feedback`/`agent:limit`/`agent:decision`/`agent:error`/`agent:result`, then
-   follow the proposal links. Every terminal claim is backed by one of those messages, and the
-   status comment's edit history gives the state timeline.
+   order, then the state log inside the `agent:status` comment, then each
+   `agent:feedback`/`agent:limit`/`agent:decision`/`agent:error`/`agent:notice`/`agent:result`, then the
+   `agent:session` messages for cost, then `agent:outcome` and the proposal links. Every terminal claim is backed by one of those messages, and the state log alone
+   gives the state timeline without any need for comment edit history.

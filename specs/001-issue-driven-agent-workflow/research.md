@@ -57,8 +57,12 @@ and would force process signals to stop a run.
   rather than to a documented wire protocol.
 
 **Boundary semantics**: "abort at the next action boundary" is implemented as *observe a pending
-halt, then let the current turn finish, then send `abort`*. Pi's own `steer` is deliberately not used
-for halts, because steering inserts an instruction rather than ending the run.
+halt, then let the current turn finish, then send `abort`*. The timing is what enforces FR-027, not
+`abort` itself: `abort` ends the current operation and only then waits for the session to become idle,
+so sending it mid-turn would interrupt a tool call. Because `abort` also continues queued steering and
+follow-up messages, the orchestrator verifies with `get_state` that both queues are empty before
+aborting. Pi's own `steer` is deliberately not used for halts, because steering inserts an instruction
+rather than ending the run.
 
 ---
 
@@ -124,13 +128,22 @@ own record rather than trusted blindly.
 ## D5 — Continuity between runs
 
 **Decision**: Best-effort Pi session continuity through a per-issue session file cached with the
-platform cache action, keyed on the issue number, with the thread as the fallback context.
+platform cache action, keyed on the issue number **and a configuration fingerprint**, with the thread
+as the fallback context.
 
 **Rationale**: SC-013 requires that a resumed run does not repeat finished steps. Pi can resume a
 session by ID, which preserves the full working context cheaply. But caches are evictable, so the
 thread must be able to stand alone: the orchestrator always builds a thread digest (request text,
 prior feedback comments, decisions, proposal links) and injects it when no session is restored. The
 thread remains the record (per the spec's clarification), the session is an optimisation.
+
+**Fingerprint requirement (added after the consistency review)**: Pi persists the system-prompt
+sections and the tool declarations inside the session file, so a resumed session can replay an older
+instruction file and an older tool allowlist. The fingerprint covers the instructions hash, `model`,
+`thinking`, `tools`, and `promptTemplates`; it is part of the session id and the cache key, and a run
+asserts the effective tool list and model through `get_state` before the first prompt. Without this,
+FR-014 ("apply the currently committed version to new work only") would be violated by the very
+mechanism that provides continuity (finding F7 in `consistency-and-decision-review.md`).
 
 **Alternatives considered**:
 - *Thread-only reconstruction*: always works, always re-derives context, and a long issue burns
@@ -153,6 +166,13 @@ issue's allowance by one configurable increment.
 cumulative cost and tokens itself, so the number is the harness's own accounting rather than an
 estimate. Measuring per turn (not per job) means the limit applies to the conversation, so resumed
 runs keep counting instead of resetting.
+
+**Session accounting (decision after the consistency review)**: Pi reports session-lifetime totals, and a
+session ends when the configuration fingerprint changes or the cache is lost — so a single cumulative
+number could be reset by an eviction. Each session is therefore documented separately in the issue as an
+`agent:session` message, and the per-issue total the limit applies to is the sum of those documented
+sessions. That keeps the limit effective across cache loss and makes the spending visible per session
+rather than as one opaque figure.
 
 **Alternatives considered**:
 - *Wall-clock timeout only*: bounds duration, not spend; a slow model can burn far more than a fast
@@ -182,6 +202,16 @@ error becomes a failed run needing one command word from a human — acceptable,
 
 **Consequence to document for users**: failed runs may be retried with `/agent retry`, which starts a
 new run continuing the recorded state, and the thread shows the sequence of attempts (FR-032).
+
+**Enforcement completed (decision after the consistency review)**: `set_auto_retry` alone covered only
+transient provider errors, while Pi also performs context-overflow recovery and compaction retries that
+emit `summarization_retry_scheduled` and set `willRetry`. The maintainer chose the strict reading, so the
+contract now closes the gap in two steps: `set_auto_compaction {enabled: false}` removes proactive
+compaction and the retry it triggers, and any remaining retry signal (`auto_retry_*`,
+`summarization_retry_*`, `compaction_*`, `willRetry`) aborts the run and fails it with
+`unexpected-retry`. The cost of the strict rule is unchanged and accepted: a long run that would have
+compacted now fails and needs one command word from a human, which is exactly what "no silent
+multiplication of consumption" asks for (finding F19, now closed).
 
 ---
 
@@ -242,6 +272,14 @@ the agent's shell finds no credential to use. The orchestrator therefore pushes 
 per-job credential it adds at push time and removes afterwards, and a unit test asserts the workspace
 git config contains no token before Pi starts.
 
+**Egress restriction (decision after the consistency review)**: `bash` has full network access, and Pi
+legitimately holds the provider key, so a hostile instruction could exfiltrate the key or the checkout —
+a risk FR-018 and SC-010 do not cover, because they speak only of the thread and committed content. The
+maintainer chose to close it rather than document it: the job applies an egress allowlist containing only
+the model provider endpoint (from `network.allowHosts`) before Pi starts, Pi runs with `--offline`, and a
+run whose restriction cannot be applied fails with `environment` instead of starting (FR-034). The
+provider key stays in the agent's environment, but it has nowhere to send it.
+
 **Alternatives considered**:
 - *Redaction only*: a denylist against an adversarial model is not a boundary.
 - *Removing the credential from the environment only*: does not stop the pasted-key accident.
@@ -259,10 +297,18 @@ operations in the orchestrator means the agent's output is a filesystem diff tha
 inspects, redacts, commits with a fixed English message, and publishes — one auditable step between
 model output and repository history. It also makes the "no credentials in Pi" decision workable.
 
+The same ownership covers the end of the proposal's life: the orchestrator observes
+`pull_request.closed`, records whether the change was merged and by whom, and resolves the issue to
+`finished` or `rejected` (FR-033). An approving or changes-requested review counts as `approve` or
+`reject` and is mirrored into the thread, because branch protection requires a review anyway and the
+thread must not contradict the pull request.
+
 **Alternatives considered**:
 - *Letting Pi run `git` and `gh` itself with credentials*: more flexible (multiple commits, branch
   switching), but puts repository authority inside the process that hostile issue text can steer.
 - *Patch files attached to comments*: no branch, no review UI, and reviewers lose inline diff review.
+- *Leaving the issue in `waiting` after the merge*: keeps the agent out of the merge path entirely, but
+  then no issue ever reaches a terminal state and SC-003 becomes unmeasurable.
 
 ---
 
@@ -285,7 +331,10 @@ alias instead of an exact ID (rejected: aliases move).
 
 **Decision**: Load prompt templates only from an **explicit allowlist** in `.agent/config.yml`
 (`promptTemplates:`), passed as repeated `--prompt-template <path>` arguments resolved on the trusted
-checkout. The default allowlist is this repository's Spec Kit set (`.pi/prompts/speckit.*.md`).
+checkout. The default allowlist is the three-step development loop — `.pi/prompts/speckit.specify.md`,
+`speckit.plan.md`, `speckit.tasks.md` — listed explicitly, not as a glob: a glob would silently admit
+every template the repository ever gains, including `/speckit.analyze`, which is not part of this
+workflow's vocabulary.
 Auto-discovery stays off (`--no-prompt-templates`).
 
 **Rationale**: "The Spec Kit prompts are irrelevant to the agent's own behaviour — but could I still
@@ -303,11 +352,12 @@ Three properties make it safe here, verified rather than assumed:
 1. **Templates are inert.** They produce prompts, not tool registrations. The worst a bad template can
    do is add instructions — and trust in reviewed repository instructions is already the model for
    `.agent/instructions.md`.
-2. **Spec Kit performs no git operations in this repository.** `grep -n "git " .specify/scripts/bash/*.sh`
-   returns nothing: `create-new-feature.sh` computes a branch *name* and creates a directory, but never
-   switches, commits, or pushes. Branch creation is a hook responsibility (`.specify/extensions.yml`),
-   which does not exist here. A remote agent driving Spec Kit therefore cannot fight the orchestrator
-   for control of git state.
+2. **Spec Kit performs no git operations in this repository.** `grep -rn "\bgit\b" .specify/scripts/bash/*.sh`
+   returns only two comment lines in `common.sh` (37, 78) that mention a hook extension which does not
+   exist; no script invokes git. `create-new-feature.sh` computes a branch *name* and creates a
+   directory, but never switches, commits, or pushes. Branch creation is a hook responsibility
+   (`.specify/extensions.yml`), which does not exist here. A remote agent driving Spec Kit therefore
+   cannot fight the orchestrator for control of git state.
 3. **Artifacts land where they are reviewable.** Spec Kit writes `specs/**`, which the orchestrator
    commits into the proposal like any other change.
 
@@ -335,12 +385,34 @@ Three properties make it safe here, verified rather than assumed:
 
 ---
 
+## D14 — Reporting an ignored directive
+
+**Decision**: the agent ends every answer with a machine-verifiable block — `agent-ignored:` followed by
+one line per ignored directive, or the literal `agent-ignored: none`. The orchestrator parses it, redacts
+it, and renders an `agent:notice` message.
+
+**Rationale**: FR-030 and SC-014 need an observable signal. Free prose in the result comment cannot be
+distinguished from an agent that stayed silent, so the security property would be unverifiable. A fixed
+block turns it into something a test can assert, and it doubles as the first concrete use of the
+"template not on the allowlist" case from D13.
+
+**Consequence**: a missing or unparsable block is recorded in the thread as "no directive report was
+produced" rather than failing the run. That is deliberately the softer of the two options: the report is
+auditable either way, and failing every run whose model forgets a formatting rule would make the workflow
+unusable. A directive the agent actually followed is a contract breach and is treated as a failure.
+
+**Alternatives considered**: free prose (unverifiable), a dedicated tool (needs an extension, which D3
+forbids), post-hoc inspection of the model transcript (the orchestrator has no access to it).
+
 ## Open items carried into Phase 1 (not clarifications, resolved here)
 
-- **Acknowledgement latency**: SC-002's two minutes is met by making the acknowledgement the first
-  action of the run job. If platform queue latency exceeds it, the concurrency group and a separate
-  lightweight acknowledgement job are the fallback levers. Documented in `contracts/labels.md`
-  invariants and `quickstart.md`.
+- **Acknowledgement latency (decided)**: a first job that posts the acknowledgement before the run would
+  only remove the same-issue serialization delay, not the platform's runner queue, which no in-Actions
+  mechanism controls. The maintainer therefore chose to make the promise honest instead of adding a
+  second writer: SC-002 is measured from the start of the run, and every acknowledgement prints the
+  trigger-to-start delay, which makes queue latency a visible, reviewable number (SC-016). This also means
+  the design does not need a second job that writes to the thread, and its idempotency marker stays
+  single-owner.
 - **Rate limits**: the orchestrator treats a 403 with a rate-limit body as a retryable *orchestrator*
   condition (bounded, with backoff), not as a run retry — the spec forbids retrying the *run*, not
   the bookkeeping call.

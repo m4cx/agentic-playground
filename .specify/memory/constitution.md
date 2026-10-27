@@ -1,41 +1,3 @@
-<!--
-Sync Impact Report
-==================
-Version change: 1.1.0 (last committed) → 2.0.0
-Bump rationale: MAJOR. The constitution was restarted from the resolved `constitution-template`
-scaffold at the maintainer's request, keeping a single principle. Principle II (root README) from
-1.1.0 is removed and Principle I is redefined and narrowed to "generated content". Removal and
-redefinition of principles is backward incompatible by the versioning policy.
-
-Note: the working-tree drafts labelled 1.2.0 and 2.0.0 (AGENTS.md mirror / AGENTS.md reference) were
-discarded before this restart; they are not part of this document's lineage.
-
-Modified principles:
-  - I. English as the Standard Language
-    → I. English for All Generated Content (redefined: applies to generated content, explicitly
-      permits other languages for communication and issue threads)
-  - II. Root README Reflects Current Project State → removed (intentional restart scope)
-
-Added sections:
-  - Additional Constraints (scope of "generated content", inbound content in other languages,
-    exceptions)
-
-Removed sections:
-  - None carried over from the template beyond the placeholders; the template's Additional
-    Constraints and Development Workflow slots are filled for the first time.
-
-Deferred TODOs:
-  - None. Ratification date is the fresh-start date of this document (2026-10-26).
-  - Judgment call to confirm: issue threads written in another language are treated as permitted
-    communication/inbound content, while everything the project itself produces stays English. If
-    issues are meant to be English-only as well, amend Principle I accordingly.
-  - Enforcement is review-based; no automated check exists yet. If one is desired, it requires a
-    separate specification.
-
-Notes for reviewers: This report is temporary scratch material and MUST be removed before the
-amended constitution is committed.
--->
-
 # Agentic Playground Constitution
 
 ## Core Principles
@@ -110,4 +72,4 @@ principles of this constitution. Deviation that cannot be justified against a pr
 rejected rather than silently accepted. Identified non-compliance is tracked and resolved as part of
 the same change whenever feasible; otherwise it MUST be recorded as a follow-up before merge.
 
-**Version**: 2.0.0 | **Ratified**: 2026-10-26 | **Last Amended**: 2026-10-26
+**Version**: 2.0.1 | **Ratified**: 2026-10-26 | **Last Amended**: 2026-10-26
