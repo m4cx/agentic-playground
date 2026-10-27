@@ -55,6 +55,20 @@ if ! id -u "$egress_user" >/dev/null 2>&1; then
 fi
 resolved_uid="$(id -u "$egress_user")"
 
+# The egress uid needs execute (not list) permission on the path to the workspace.
+# The orchestrator verifies write access later; this step only guarantees the path.
+if [ -n "${GITHUB_WORKSPACE:-}" ]; then
+  directory="$GITHUB_WORKSPACE"
+  while [ "$directory" != "/" ]; do
+    if [ ! -x "$directory" ]; then
+      chmod o+x "$directory" || fail "cannot make $directory traversable for $egress_user"
+    fi
+    directory="$(dirname "$directory")"
+  done
+  sudo -u "$egress_user" test -x "$GITHUB_WORKSPACE" \
+    || fail "$egress_user cannot traverse to $GITHUB_WORKSPACE"
+fi
+
 # Resolve every allowlisted host to IPv4 addresses. Any resolution failure aborts.
 declare -a addresses=()
 for host in "${hosts[@]}"; do

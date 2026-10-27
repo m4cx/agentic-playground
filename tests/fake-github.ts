@@ -285,6 +285,7 @@ export interface HarnessOptions {
   now?: () => Date;
   runId?: string;
   env?: Record<string, string>;
+  getuid?: () => number;
 }
 
 export interface Harness {
@@ -332,9 +333,8 @@ export function makeHarness(options: HarnessOptions = {}): Harness {
     environment: env,
     secrets: ["test-token-value", "test-provider-key"],
     ...(options.now === undefined ? {} : { now: options.now }),
-    piCommand: process.execPath,
-    argPrefix: [stubPath],
-    piVersion: "1.4.0",
+    piRuntime: { nodePath: process.execPath, entry: stubPath, version: "1.4.0" },
+    ...(options.getuid === undefined ? {} : { getuid: options.getuid }),
     headSha: async () => "abc1234",
     workspaceFactory: () => new FakeWorkspace(workspace) as unknown as Workspace,
     log: () => undefined,

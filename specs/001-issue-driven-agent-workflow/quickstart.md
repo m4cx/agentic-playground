@@ -15,6 +15,9 @@ machine's terminal beyond creating the issue.
    - `.github/workflows/agent-run.yml`, `agent-command.yml`, `agent-proposal.yml`, and `agent-sweep.yml`,
      plus `.github/scripts/agent-egress.sh`
    - `package.json`, `tsconfig.json`, `src/agent/**` (TypeScript) and `tests/**` (TypeScript)
+   - No global `pi` installation is required or used: `npm ci` installs the pinned package and the
+     orchestrator resolves its executable from `node_modules/`
+     ([contracts/pi-rpc.md](./contracts/pi-rpc.md) §"Runtime preconditions").
 2. Repository settings:
    - Actions enabled; workflow token permissions set to **read** by default, with the two agent
      workflows declaring `issues: write`, `contents: write`, `pull_requests: write`.
@@ -37,6 +40,15 @@ npm test           # node --test dist/tests
 
 Expected: all tests pass, and specifically:
 
+- `tests/unit/pi-runtime.test.ts` — the executable is resolved from `node_modules/` with a bare `PATH`; an
+  entry outside `node_modules/`, a range dependency, or a version that differs from the pin each fail with
+  `environment` before any model call.
+- `tests/integration/pi-launch.test.ts` — the spawn shape is `node + resolved entry`, never a bare `pi`,
+  and the child environment contains the provider key but no GitHub token.
+- `tests/integration/workspace-git.test.ts` — git uses the separate `GIT_DIR`, `core.hooksPath=/dev/null`,
+  `--no-verify`, and the push credential only in `GIT_CONFIG_VALUE_0`.
+- `tests/unit/egress-preflight.test.ts` — a work-tree write succeeds; `GIT_DIR`, an in-tree `.git`, and
+  `node_modules/` are refused as writable/readable by the egress uid.
 - `tests/unit/commands.test.ts` — `/agent` mid-sentence and inside a code fence are *not* commands
   ([contracts/commands.md](./contracts/commands.md) grammar).
 - `tests/unit/permissions.test.ts` — write-access gate, and re-check at decision time.
@@ -67,6 +79,32 @@ Expected: all tests pass, and specifically:
   aborts the run and fails it with `unexpected-retry`.
 - `tests/integration/proposal-outcome.test.ts` — an approving review records a decision, and a closed
   pull request resolves the issue to `finished` or `rejected`.
+
+## CI parity check (no global install)
+
+Prove that the local machine's global `pi` is not part of the runtime, and that the executable comes from
+the lockfile:
+
+```bash
+# 1. The package entry resolves inside this repository's node_modules.
+node --input-type=module -e "console.log(import.meta.resolve('@earendil-works/pi-coding-agent'))"
+
+# 2. The CLI works with a PATH that contains no Pi and no npm-created bin directory.
+env -i PATH=/usr/bin:/bin:"$(dirname "$(command -v node)")" \
+  node node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js --version
+
+# 3. The pinned version is exact and matches the lockfile.
+node --input-type=module -e "
+  const p = await import('./package.json', { with: { type: 'json' } });
+  const l = await import('./package-lock.json', { with: { type: 'json' } });
+  const pin = p.default.dependencies['@earendil-works/pi-coding-agent'];
+  const locked = l.default.packages['node_modules/@earendil-works/pi-coding-agent'].version;
+  console.log({ pin, locked, exact: /^\\d+\\.\\d+\\.\\d+$/.test(pin) });
+"
+```
+
+Expected: the resolution is under `<repo>/node_modules/`, `--version` prints the pinned version with no
+global Pi present, and `pin === locked` with `exact: true`.
 
 ## End-to-end scenarios
 
@@ -228,12 +266,41 @@ before Pi started.
 
 **Expected**: the acknowledgement shows a different configuration fingerprint; the run starts a new
 session instead of resuming the cached one; the job log shows the `get_state` assertion passing with
-the reduced tool set. The removed tool is not callable in the new run.
+the reduced tool set. The removed tool is not callable in the new run. Pi-upgrade variant: bump the
+pinned version in `package.json`/`package-lock.json`, run `npm ci`, and retry; the acknowledgement
+reports the new version and the fingerprint changes even though no `.agent/` file changed.
+
+### S15 — Pi is provisioned by the job, not the runner image (research D16/D17)
+
+1. Trigger S1 on a clean `ubuntu-24.04` runner. Before that, confirm the job has no global `pi`:
+   `command -v pi` returns nothing in the `run` step's environment.
+2. Read the `agent:ack`: it states the Pi version.
+3. Inspect the job log for the resolved runtime line (`node=… entry=… version=…`).
+4. After the run starts, from the job shell (root) probe the boundaries:
+   `sudo -u agent-egress test -w "$GITHUB_WORKSPACE/README.md"` succeeds,
+   `sudo -u agent-egress test -e "$RUNNER_TEMP/agent-git"` fails,
+   `test -e "$GITHUB_WORKSPACE/.git"` fails, and
+   `sudo -u agent-egress test -w "$GITHUB_WORKSPACE/node_modules"` fails.
+5. Confirm the secret file is gone before Pi starts: `test -e "$RUNNER_TEMP/agent-env"` fails.
+6. Inspect the Pi child: `ps -o uid= -p <pi-pid>` equals `AGENT_EGRESS_UID`; the orchestrator runs as uid 0.
+7. After teardown, confirm `pgrep -u agent-egress` returns nothing and no process from the Pi group is
+   still alive before the proposal branch is committed.
+
+**Expected**: the run needs no global or separately installed Pi; the version in `agent:ack` matches
+`package-lock.json`; the agent can edit tracked files but cannot reach `$RUNNER_TEMP/agent-git`; the
+GitHub token is absent from the Pi environment; `$RUNNER_TEMP/agent-env` is removed before Pi starts;
+and the push credential appears in neither `argv` (checked with `ps`) nor the git config.
 
 ## Troubleshooting signals worth watching
 
 | Symptom | Likely contract breach |
 |---------|------------------------|
+| `Pi failed to start: spawn pi ENOENT` | The launch still uses a bare `pi` instead of the resolved entry (`pi-rpc.md` §"Runtime preconditions", research D16) |
+| `Pi failed to start: EPERM` | `AGENT_EGRESS_UID` is set but the orchestrator is not uid 0; the run step is missing the `sudo` handoff (research D17) |
+| `fatal: detected dubious ownership in repository` | git uses an in-work-tree git directory, or the separate `GIT_DIR` is not root-owned; `safe.directory` is only defense in depth (research D17) |
+| The agent can read a tracked file but `edit`/`write` fails with `EACCES` | The work tree was not handed to the egress uid |
+| The agent can write `.git` or reach `GIT_DIR` | The git directory was not moved out of the work tree, or the preflight probe is missing (research D17) |
+| `agent:ack` reports a version other than the installed one | The version is hardcoded instead of taken from the resolved package (research D16) |
 | Two status comments appear | `thread-messages.md` idempotency marker not applied |
 | A status row disappeared or was rewritten | `thread-messages.md` append-only row rule; `state-log.ts` rewrite path |
 | A `/speckit.*` command silently does nothing | Template not on the allowlist, or `--prompt-template` missing from the launch arguments (research D13) |

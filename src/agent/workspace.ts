@@ -6,10 +6,22 @@
  * and only to a branch that is not the default branch.
  */
 
-import { execFile } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { execFile, spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  chownSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import type { ProposalConfig } from "./config.js";
+import type { PiRuntime } from "./pi-runtime.js";
 import { containsCredential, redact } from "./redact.js";
 
 export interface GitResult {
@@ -156,12 +168,261 @@ export function scanForCredentials(files: readonly ScannedFile[], secrets: reado
   return { detected: paths.length > 0, paths, redactedPaths };
 }
 
+export interface EgressProbeResult {
+  workTreeWritable: boolean;
+  gitDirReadable: boolean;
+  gitDirWritable: boolean;
+  dotGitPresent: boolean;
+  nodeModulesWritable: boolean;
+  entryReadable: boolean;
+  nodeExecutable: boolean;
+  sessionWritable: boolean;
+}
+
+/**
+ * The workspace boundary must fail closed: exactly these outcomes are accepted.
+ * Kept pure so the rule is testable without root (task T109).
+ */
+export function verifyEgressBoundaries(result: EgressProbeResult): void {
+  if (!result.workTreeWritable) {
+    throw new WorkspaceError("the egress uid cannot write the work tree", "environment");
+  }
+  if (result.gitDirReadable || result.gitDirWritable) {
+    throw new WorkspaceError("the egress uid can reach GIT_DIR; the git directory must stay outside the work tree", "environment");
+  }
+  if (result.dotGitPresent) {
+    throw new WorkspaceError("the work tree still contains a .git entry; the agent could replace it", "environment");
+  }
+  if (result.nodeModulesWritable) {
+    throw new WorkspaceError("the egress uid can write node_modules; the agent could rewrite its harness", "environment");
+  }
+  if (!result.entryReadable) {
+    throw new WorkspaceError("the egress uid cannot read the resolved Pi entry", "environment");
+  }
+  if (!result.nodeExecutable) {
+    throw new WorkspaceError("the egress uid cannot execute the Node binary", "environment");
+  }
+  if (!result.sessionWritable) {
+    throw new WorkspaceError("the egress uid cannot write the session cache directory", "environment");
+  }
+}
+
+export interface PrepareWorkspaceOptions {
+  repoRoot: string;
+  runTemp: string;
+  sessionDir: string;
+  egressUid: number;
+  egressGid?: number;
+  /** The resolved runtime whose entry/node must be readable/executable by the egress uid. */
+  runtime?: PiRuntime;
+  /** The job user that must be able to read the session cache after the run. */
+  cacheOwnerUid?: number;
+  cacheOwnerGid?: number;
+  /** Test seam: replaces the default probe spawned as the egress uid. */
+  probe?: (input: PrepareWorkspaceOptions) => EgressProbeResult;
+  /** Test seam: replaces the real chown. */
+  chown?: (path: string, uid: number, gid: number) => void;
+  /** Test seam: the Node binary used for the default probe. */
+  probeNode?: string;
+}
+
+export interface PreparedWorkspace {
+  gitDir: string;
+  /** Owner of the session cache before it was handed to the egress uid. */
+  sessionOwnerUid: number;
+  sessionOwnerGid: number;
+}
+
+function chownTree(
+  root: string,
+  uid: number,
+  gid: number,
+  chown: (path: string, uid: number, gid: number) => void,
+): void {
+  const nodeModules = join(root, "node_modules");
+  const walk = (directory: string): void => {
+    const stats = lstatSync(directory);
+    if (stats.isSymbolicLink()) return;
+    chown(directory, uid, gid);
+    if (!stats.isDirectory()) return;
+    for (const entry of readdirSync(directory)) {
+      const absolute = join(directory, entry);
+      if (absolute === nodeModules) continue;
+      walk(absolute);
+    }
+  };
+  walk(root);
+}
+
+/** Make every ancestor of `root` traversable for the egress uid, without listing rights. */
+function ensureAncestorTraversal(root: string): void {
+  let directory = resolve(root);
+  for (;;) {
+    try {
+      const mode = statSync(directory).mode;
+      if ((mode & 0o001) === 0) chmodSync(directory, mode | 0o001);
+    } catch {
+      // Ancestors outside our control (for example a platform temp dir) may refuse
+      // chmod; the egress probe below is the authority and fails closed.
+    }
+    const parent = dirname(directory);
+    if (parent === directory) return;
+    directory = parent;
+  }
+}
+
+function defaultEgressProbe(options: PrepareWorkspaceOptions): EgressProbeResult {
+  if (options.runtime === undefined) {
+    throw new WorkspaceError("the egress probe needs the resolved Pi runtime", "environment");
+  }
+  const script = `
+const fs = require("node:fs");
+const path = require("node:path");
+const out = {
+  workTreeWritable: false,
+  gitDirReadable: false,
+  gitDirWritable: false,
+  dotGitPresent: false,
+  nodeModulesWritable: false,
+  entryReadable: false,
+  nodeExecutable: false,
+  sessionWritable: false,
+};
+const work = ${JSON.stringify(options.repoRoot)};
+const gitDir = ${JSON.stringify(join(options.runTemp, "agent-git"))};
+const nodeModules = path.join(work, "node_modules");
+try {
+  const probe = path.join(work, ".agent-write-probe");
+  fs.writeFileSync(probe, "ok");
+  fs.unlinkSync(probe);
+  out.workTreeWritable = true;
+} catch {}
+try { fs.readdirSync(gitDir); out.gitDirReadable = true; } catch {}
+try {
+  const probe = path.join(gitDir, ".agent-write-probe");
+  fs.writeFileSync(probe, "ok");
+  fs.unlinkSync(probe);
+  out.gitDirWritable = true;
+} catch {}
+out.dotGitPresent = fs.existsSync(path.join(work, ".git"));
+try {
+  fs.accessSync(${JSON.stringify(options.runtime.entry)}, fs.constants.R_OK);
+  out.entryReadable = true;
+} catch {}
+try {
+  fs.accessSync(${JSON.stringify(options.runtime.nodePath)}, fs.constants.X_OK);
+  out.nodeExecutable = true;
+} catch {}
+try {
+  const probe = path.join(${JSON.stringify(options.sessionDir)}, ".agent-write-probe");
+  fs.writeFileSync(probe, "ok");
+  fs.unlinkSync(probe);
+  out.sessionWritable = true;
+} catch {}
+try {
+  const probe = path.join(nodeModules, ".agent-write-probe");
+  fs.writeFileSync(probe, "ok");
+  fs.unlinkSync(probe);
+  out.nodeModulesWritable = true;
+} catch {}
+process.stdout.write(JSON.stringify(out));
+`;
+  const result = spawnSync(options.probeNode ?? process.execPath, ["-e", script], {
+    uid: options.egressUid,
+    gid: options.egressGid ?? options.egressUid,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      HOME: join(options.sessionDir, "home"),
+      TMPDIR: join(options.sessionDir, "tmp"),
+    },
+  });
+  if (result.error !== undefined || result.status !== 0) {
+    throw new WorkspaceError(
+      `the egress probe failed: ${result.error?.message ?? result.stderr ?? `exit ${String(result.status)}`}`,
+      "environment",
+    );
+  }
+  try {
+    return JSON.parse(result.stdout) as EgressProbeResult;
+  } catch {
+    throw new WorkspaceError("the egress probe returned an unparsable result", "environment");
+  }
+}
+
+/**
+ * Move the checkout's git directory outside the work tree, hand the work tree to
+ * the egress uid (except node_modules), make the path traversable, and probe the
+ * boundary. A failure is `environment`, before the acknowledgement.
+ */
+function prepareAgentWorkspaceUnsafe(options: PrepareWorkspaceOptions): PreparedWorkspace {
+  const gitDir = join(options.runTemp, "agent-git");
+  const dotGit = join(options.repoRoot, ".git");
+  mkdirSync(options.runTemp, { recursive: true });
+  if (existsSync(dotGit)) {
+    rmSync(gitDir, { recursive: true, force: true });
+    renameSync(dotGit, gitDir);
+  } else if (!existsSync(gitDir)) {
+    throw new WorkspaceError("the checkout has no git directory to isolate", "environment");
+  }
+  if (existsSync(dotGit)) rmSync(dotGit, { recursive: true, force: true });
+  const chown = options.chown ?? chownSync;
+  if (process.getuid?.() === 0) chownTree(gitDir, 0, 0, chown);
+  chmodSync(gitDir, 0o700);
+
+  mkdirSync(options.sessionDir, { recursive: true });
+  const sessionStats = lstatSync(options.sessionDir);
+  if (sessionStats.isSymbolicLink() || !sessionStats.isDirectory()) {
+    throw new WorkspaceError("the session cache path is not a real directory", "environment");
+  }
+  const sessionOwnerUid = options.cacheOwnerUid ?? sessionStats.uid;
+  const sessionOwnerGid = options.cacheOwnerGid ?? sessionStats.gid;
+  chownTree(options.repoRoot, options.egressUid, options.egressGid ?? options.egressUid, chown);
+  // The restored cache is extracted as the runner; Pi runs as the egress uid and
+  // must be able to append to an existing session file.
+  chownTree(options.sessionDir, options.egressUid, options.egressGid ?? options.egressUid, chown);
+  ensureAncestorTraversal(options.repoRoot);
+  ensureAncestorTraversal(options.sessionDir);
+
+  const probe = options.probe ?? defaultEgressProbe;
+  verifyEgressBoundaries(probe(options));
+  return { gitDir, sessionOwnerUid, sessionOwnerGid };
+}
+
+/** Hand the session cache back to the runner so the cache-save step can read it. */
+export function restoreSessionOwnership(
+  sessionDir: string,
+  uid: number,
+  gid: number,
+  chown: (path: string, uid: number, gid: number) => void = chownSync,
+): void {
+  try {
+    chownTree(sessionDir, uid, gid, chown);
+  } catch {
+    // Best effort: a missing cache is not an error, and the run itself has ended.
+  }
+}
+
+export function prepareAgentWorkspace(options: PrepareWorkspaceOptions): PreparedWorkspace {
+  try {
+    return prepareAgentWorkspaceUnsafe(options);
+  } catch (error) {
+    if (error instanceof WorkspaceError) throw error;
+    throw new WorkspaceError(
+      `could not prepare the agent workspace: ${error instanceof Error ? error.message : String(error)}`,
+      "environment",
+    );
+  }
+}
+
 export interface WorkspaceOptions {
   repoRoot: string;
   defaultBranch: string;
   issueNumber: number;
   proposal: ProposalConfig;
   secrets: readonly string[];
+  /** Root-owned git directory outside the work tree; omitted in unit tests. */
+  gitDir?: string;
   runGit?: GitRunner;
 }
 
@@ -187,11 +448,33 @@ function defaultGitRunner(repoRoot: string): GitRunner {
 export class Workspace {
   private readonly options: WorkspaceOptions;
   private readonly runGit: GitRunner;
+  private readonly gitDir: string | undefined;
   private branch: string | null = null;
 
   constructor(options: WorkspaceOptions) {
     this.options = options;
     this.runGit = options.runGit ?? defaultGitRunner(options.repoRoot);
+    this.gitDir = options.gitDir;
+  }
+
+  /** Prefix the separate git directory and the hardened git options. */
+  private gitArgs(args: readonly string[]): string[] {
+    if (this.gitDir === undefined) return [...args];
+    return [
+      "--git-dir",
+      this.gitDir,
+      "--work-tree",
+      this.options.repoRoot,
+      "-c",
+      `safe.directory=${this.options.repoRoot}`,
+      "-c",
+      "core.hooksPath=/dev/null",
+      ...args,
+    ];
+  }
+
+  private git(args: readonly string[], env?: NodeJS.ProcessEnv): Promise<GitResult> {
+    return this.runGit(this.gitArgs(args), env === undefined ? {} : { env });
   }
 
   get currentBranch(): string | null {
@@ -202,7 +485,7 @@ export class Workspace {
   async createBranch(title: string): Promise<string> {
     const existing = await this.remoteBranches("agent/");
     const branch = branchName(this.options.issueNumber, title, existing);
-    const created = await this.runGit(["switch", "-c", branch]);
+    const created = await this.git(["switch", "-c", branch]);
     if (created.code !== 0) {
       throw new WorkspaceError(`could not create branch ${branch}`, "environment");
     }
@@ -211,7 +494,7 @@ export class Workspace {
   }
 
   private async remoteBranches(prefix: string): Promise<string[]> {
-    const result = await this.runGit(["branch", "--all", "--format=%(refname:short)"]);
+    const result = await this.git(["branch", "--all", "--format=%(refname:short)"]);
     if (result.code !== 0) return [];
     return result.stdout
       .split("\n")
@@ -221,9 +504,9 @@ export class Workspace {
 
   /** Stage everything the agent produced, excluding build output and sessions. */
   async stageChanges(): Promise<DiffCheck> {
-    const add = await this.runGit(["add", "--all", "--", "."]);
+    const add = await this.git(["add", "--all", "--", "."]);
     if (add.code !== 0) throw new WorkspaceError("could not stage changes", "environment");
-    const numstat = await this.runGit(["diff", "--cached", "--numstat"]);
+    const numstat = await this.git(["diff", "--cached", "--numstat"]);
     if (numstat.code !== 0) throw new WorkspaceError("could not read the diff", "environment");
     const filtered = numstat.stdout
       .split("\n")
@@ -268,12 +551,12 @@ export class Workspace {
   }
 
   async commit(message: string): Promise<void> {
-    const result = await this.runGit(["commit", "-m", message]);
+    const result = await this.git(["commit", "--no-verify", "-m", message]);
     if (result.code !== 0) throw new WorkspaceError("could not commit the change", "environment");
   }
 
   async hasStagedChanges(): Promise<boolean> {
-    const result = await this.runGit(["diff", "--cached", "--quiet"]);
+    const result = await this.git(["diff", "--cached", "--quiet"]);
     return result.code !== 0;
   }
 
@@ -287,13 +570,11 @@ export class Workspace {
       throw new WorkspaceError("no usable credential was provided for the push", "environment");
     }
     const basic = Buffer.from(`x-access-token:${token}`, "utf8").toString("base64");
-    const result = await this.runGit([
-      "-c",
-      `http.extraheader=AUTHORIZATION: basic ${basic}`,
-      "push",
-      "origin",
-      `${this.branch}:${this.branch}`,
-    ]);
+    const result = await this.git(["push", "origin", `${this.branch}:${this.branch}`], {
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "http.extraheader",
+      GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${basic}`,
+    });
     if (result.code !== 0) {
       const conflict = /non-fast-forward|rejected|protected branch|pre-receive hook/i.test(result.stderr);
       throw new WorkspaceError(
@@ -306,7 +587,7 @@ export class Workspace {
 
   /** The workspace git config must never contain a credential after the push. */
   async assertNoCredentialInGitConfig(): Promise<void> {
-    const configPath = join(this.options.repoRoot, ".git", "config");
+    const configPath = this.gitDir === undefined ? join(this.options.repoRoot, ".git", "config") : join(this.gitDir, "config");
     if (!existsSync(configPath)) return;
     const content = readFileSync(configPath, "utf8");
     if (/extraheader/i.test(content) || containsCredential(content)) {

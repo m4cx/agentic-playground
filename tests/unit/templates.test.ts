@@ -16,6 +16,14 @@ function repoWithTemplates(): string {
     writeFileSync(join(root, ".pi", "prompts", `${name}.md`), `# ${name}\n`);
   }
   writeFileSync(
+    join(root, "package.json"),
+    JSON.stringify({ dependencies: { "@earendil-works/pi-coding-agent": "1.4.0" } }),
+  );
+  writeFileSync(
+    join(root, "package-lock.json"),
+    JSON.stringify({ packages: { "node_modules/@earendil-works/pi-coding-agent": { version: "1.4.0" } } }),
+  );
+  writeFileSync(
     join(root, ".agent", "instructions.md"),
     "# Instructions\n",
   );

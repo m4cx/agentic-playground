@@ -99,7 +99,7 @@ test("a detectable secret in a committed file aborts and is also recorded as red
   assert.deepEqual(scan.redactedPaths, [".env"]);
 });
 
-test("the push carries the credential as an argument, never in git config", async () => {
+test("the push carries the credential in git's environment, never in argv or config", async () => {
   const calls: Array<{ args: string[]; env?: NodeJS.ProcessEnv }> = [];
   const repoRoot = mkdtempSync(join(tmpdir(), "agent-worktree-"));
   const workspace = new Workspace({
@@ -117,11 +117,13 @@ test("the push carries the credential as an argument, never in git config", asyn
   await workspace.pushWithCredential("push-token-value");
   const pushCall = calls.find((call) => call.args.includes("push"));
   assert.ok(pushCall !== undefined);
-  const extraHeader = pushCall.args[pushCall.args.indexOf("-c") + 1] ?? "";
-  assert.match(extraHeader, /http\.extraheader=AUTHORIZATION: basic /);
-  assert.equal(extraHeader.includes("push-token-value"), false);
+  assert.equal(pushCall.args.join(" ").includes("push-token-value"), false);
+  assert.equal(pushCall.args.includes("http.extraheader"), false);
   const base64 = Buffer.from("x-access-token:push-token-value", "utf8").toString("base64");
-  assert.ok(extraHeader.includes(base64));
+  assert.equal(pushCall.env?.["GIT_CONFIG_COUNT"], "1");
+  assert.equal(pushCall.env?.["GIT_CONFIG_KEY_0"], "http.extraheader");
+  assert.match(pushCall.env?.["GIT_CONFIG_VALUE_0"] ?? "", /AUTHORIZATION: basic /);
+  assert.ok((pushCall.env?.["GIT_CONFIG_VALUE_0"] ?? "").includes(base64));
   assert.equal(pushCall.env?.["GITHUB_TOKEN"], undefined);
 });
 

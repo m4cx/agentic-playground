@@ -194,6 +194,7 @@ test("the acknowledgement carries the queue delay and the fingerprint", () => {
   const body = samples()[0]?.body ?? "";
   assert.match(body, /queue delay `30` seconds/);
   assert.match(body, /configuration fingerprint `1234567890ab`/);
+  assert.match(body, /Pi `1\.4\.0`/);
   assert.match(body, /Request version: abc123/);
 });
 
