@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { containsSecret } from "./redact.js";
 import { AgentError, errorMessage } from "./errors.js";
 
 export interface CommandResult {
@@ -17,6 +18,7 @@ export interface WorkspaceLike {
     defaultBranch: string;
     branch: string;
     resume: boolean;
+    remoteUrl?: string;
   }): Promise<{
     headSha: string;
     behindBy: number;
@@ -31,11 +33,14 @@ export interface WorkspaceLike {
   headSha(): Promise<string>;
   diffStat(): Promise<string>;
   changedPaths(): Promise<string[]>;
+  findSecrets(secrets: readonly string[]): Promise<string[]>;
 }
 
 export class GitWorkspace implements WorkspaceLike {
   readonly root: string;
   private token = "";
+  private cleanUrl = "";
+  private pushUrl = "";
 
   constructor(root: string) {
     this.root = root;
@@ -66,10 +71,11 @@ export class GitWorkspace implements WorkspaceLike {
       child.on("close", (code) => {
         const safeStderr = this.redact(stderr);
         if (code !== 0 && !allowFailure) {
+          const safeArgs = args.map((arg) => this.redact(arg));
           reject(
             new AgentError(
               "workspace",
-              `git ${args.join(" ")} failed with ${code}: ${safeStderr.slice(0, 1000)}`,
+              `git ${safeArgs.join(" ")} failed with ${code}: ${safeStderr.slice(0, 1000)}`,
             ),
           );
           return;
@@ -90,6 +96,7 @@ export class GitWorkspace implements WorkspaceLike {
     defaultBranch: string;
     branch: string;
     resume: boolean;
+    remoteUrl?: string;
   }): Promise<{
     headSha: string;
     behindBy: number;
@@ -98,15 +105,14 @@ export class GitWorkspace implements WorkspaceLike {
     recoveredBranch: boolean;
   }> {
     this.token = input.token;
-    mkdirSync(path.dirname(this.root), { recursive: true });
+    const plainUrl = `https://github.com/${input.owner}/${input.repo}.git`;
+    this.cleanUrl = input.remoteUrl ?? plainUrl;
+    this.pushUrl =
+      input.remoteUrl ?? `https://x-access-token:${input.token}@github.com/${input.owner}/${input.repo}.git`;
+    mkdirSync(this.root, { recursive: true });
 
     if (!(await this.isRepository())) {
-      await this.run([
-        "clone",
-        "--no-checkout",
-        `https://x-access-token:${input.token}@github.com/${input.owner}/${input.repo}.git`,
-        this.root,
-      ]);
+      await this.run(["clone", "--no-checkout", this.pushUrl, this.root]);
     }
 
     await this.run(["fetch", "--prune", "origin"]);
@@ -131,13 +137,27 @@ export class GitWorkspace implements WorkspaceLike {
       ]);
       behindBy = Number(count.stdout.trim()) || 0;
       if (behindBy > 0) {
-        const merge = await this.run(["merge", "--no-edit", `origin/${input.defaultBranch}`], true);
+        const merge = await this.run(
+          [
+            "-c",
+            "user.name=agentic-playground",
+            "-c",
+            "user.email=agent@users.noreply.github.com",
+            "merge",
+            "--no-edit",
+            `origin/${input.defaultBranch}`,
+          ],
+          true,
+        );
         if (merge.code !== 0) {
           conflicts.push(...(await this.getConflictedPaths()));
         }
         headSha = await this.headSha();
       }
     }
+
+    // The agent must not be able to read the repository token from .git/config.
+    await this.run(["remote", "set-url", "origin", this.cleanUrl], true);
 
     return {
       headSha,
@@ -192,6 +212,22 @@ export class GitWorkspace implements WorkspaceLike {
       .filter((line) => line.length > 0);
   }
 
+  async findSecrets(secrets: readonly string[]): Promise<string[]> {
+    const listed = await this.run(["ls-files", "--modified", "--others", "--exclude-standard"], true);
+    const hits: string[] = [];
+    for (const relative of listed.stdout.split("\n").map((line) => line.trim()).filter(Boolean)) {
+      try {
+        const content = readFileSync(path.join(this.root, relative), "utf8");
+        if (containsSecret(content, secrets)) {
+          hits.push(relative);
+        }
+      } catch {
+        // Binary or unreadable files are not scanned; the agent is instructed not to write secrets.
+      }
+    }
+    return hits;
+  }
+
   async headSha(): Promise<string> {
     const result = await this.run(["rev-parse", "HEAD"]);
     return result.stdout.trim();
@@ -240,9 +276,17 @@ export class GitWorkspace implements WorkspaceLike {
   }
 
   async push(branch: string): Promise<void> {
-    const result = await this.run(["push", "origin", `HEAD:refs/heads/${branch}`], true);
-    if (result.code !== 0) {
-      throw new AgentError("push", `push of ${branch} failed: ${result.stderr.slice(0, 1000)}`);
+    if (!this.pushUrl || !this.cleanUrl) {
+      throw new AgentError("workspace", "push called before prepare");
+    }
+    try {
+      await this.run(["remote", "set-url", "origin", this.pushUrl], true);
+      const result = await this.run(["push", "origin", `HEAD:refs/heads/${branch}`], true);
+      if (result.code !== 0) {
+        throw new AgentError("push", `push of ${branch} failed: ${result.stderr.slice(0, 1000)}`);
+      }
+    } finally {
+      await this.run(["remote", "set-url", "origin", this.cleanUrl], true);
     }
   }
 }

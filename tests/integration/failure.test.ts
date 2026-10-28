@@ -90,3 +90,26 @@ test("a waiting result keeps the session open with a question", async () => {
     cleanup();
   }
 });
+
+test("a secret in the agent's files fails the run without committing", async () => {
+  const github = new FakeGitHub({ number: 42, title: "Fix login timeout", labels: ["agent:run"] });
+  const workspace = new FakeWorkspace("/tmp/workspace-secret", {
+    hasChanges: true,
+    leakedSecrets: ["src/leak.ts"],
+  });
+  const pi = new FakePi(() => ({ text: outputText(defaultOutput()), stats: null }));
+  const { deps, cleanup } = makeDeps({ github, pi, workspace, runId: "run-secret" });
+  try {
+    await assert.rejects(
+      () => handleWork({ deps, eventName: "issues", payload: readEvent("issues-labeled.json") }),
+      (error: unknown) => (error as { code?: string }).code === "redaction",
+    );
+    assert.equal(workspace.commits.length, 0);
+    assert.equal(workspace.pushes.length, 0);
+    const state = parseStateMarker(github.stateComment()!.body)!;
+    assert.equal(state.session.state, "failed");
+    assert.equal(state.session.lastFailure?.reason, "redaction");
+  } finally {
+    cleanup();
+  }
+});

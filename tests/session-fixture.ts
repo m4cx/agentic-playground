@@ -43,7 +43,7 @@ export function seedSession(
     requestVersion: "sha256:seed",
   });
   session.state = state;
-  session.pullRequestNumber = state === "working" ? null : 7;
+  session.pullRequestNumber = state === "accepted" ? null : 7;
   session.headSha = state === "accepted" ? null : "head-sha";
   const record = createStateRecord(session, "run-seed");
   if (withRun) {

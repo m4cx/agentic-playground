@@ -50,13 +50,15 @@ test("builds a bounded digest and marks truncation", () => {
   assert.match(digest.comments[0]!.body, /\[truncated 100 characters\]/);
 });
 
-test("excludes internal comments from the digest", () => {
+test("excludes state and notice comments but keeps prior result summaries", () => {
   const comments = [
     comment(1, "hello"),
     comment(2, "<!-- agent-session-state {} -->"),
     comment(3, "<!-- agent-run:1 --> result"),
+    comment(4, "<!-- agent-notice:1 --> notice"),
   ];
   const digest = buildDigest(issue, comments, { maxComments: 10, maxCommentCharacters: 1000 });
-  assert.equal(digest.comments.length, 1);
+  assert.equal(digest.comments.length, 2);
   assert.equal(digest.comments[0]!.body, "hello");
+  assert.equal(digest.comments[1]!.isAgentResult, true);
 });

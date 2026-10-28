@@ -93,7 +93,7 @@ export function materializeRuntime(input: {
   copyFileSync(path.join(runtimeDir, ".agent", "models.json"), path.join(agentDir, "models.json"));
   chmodSync(homeDir, 0o777);
   chmodSync(sessionDir, 0o777);
-  chmodSync(agentDir, 0o755);
+  chmodSync(agentDir, 0o777);
 
   return {
     runtimeDir,

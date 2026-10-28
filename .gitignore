@@ -432,3 +432,9 @@ dist/
 
 # Run-local Pi session cache for the issue-driven agent
 .agent-state/
+
+# Node/test artifacts that must not be committed by an agent run
+coverage/
+.nyc_output/
+*.log
+.env*

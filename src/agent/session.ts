@@ -445,6 +445,14 @@ export async function handleWork(input: {
       runAsUser: process.env.AGENT_EGRESS_USER || undefined,
     });
 
+    const leaked = await workspace.findSecrets(deps.secrets ?? []);
+    if (leaked.length > 0) {
+      throw new AgentError(
+        "redaction",
+        `the agent wrote secret material to: ${leaked.join(", ")}`,
+      );
+    }
+
     const output: AgentOutput = parseAgentOutput(result.text, deps.secrets ?? []);
     const subject = runSubject(issue.number);
     const body = runBody(record.session, deps.runId, output.state, output.summary);
@@ -498,7 +506,7 @@ export async function handleWork(input: {
     const reason = isAgentError(error) ? error.code : "environment";
     const message = errorMessage(error);
 
-    if (workspace) {
+    if (workspace && reason !== "redaction") {
       try {
         const wip = await workspace.commitWip(
           `agent: work in progress on issue #${issue.number}`,

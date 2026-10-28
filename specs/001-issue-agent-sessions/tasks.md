@@ -312,7 +312,7 @@ Task: "Run tests/integration/run.test.ts for the no-change path"
 ## Implementation Status (2026-10-28)
 
 - **Completed**: 77 of 83 tasks.
-- **Automated validation**: `npm run typecheck` passes; `npm test` passes 104 tests; all four
+- **Automated validation**: `npm run typecheck` passes; `npm test` passes 109 tests; all four
   workflow files parse as YAML; `.github/scripts/agent-egress.sh` passes `bash -n`; `package-lock.json`
   pins `@earendil-works/pi-coding-agent` to `1.4.0`.
 - **Pending manual sandbox scenarios**: T052 (S1 happy path), T059 (S2 resume), T065 (S6 merge

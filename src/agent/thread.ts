@@ -59,7 +59,6 @@ export function isAgentResultComment(comment: IssueComment): boolean {
 export function isInternalComment(comment: IssueComment): boolean {
   return (
     STATE_MARKER.test(comment.body) ||
-    RESULT_MARKER.test(comment.body) ||
     ACK_MARKER.test(comment.body) ||
     NOTICE_MARKER.test(comment.body)
   );

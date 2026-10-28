@@ -6,6 +6,7 @@ export interface FakeWorkspaceOptions {
   headSha?: string;
   prepareError?: Error;
   branchMissing?: boolean;
+  leakedSecrets?: string[];
 }
 
 export class FakeWorkspace implements WorkspaceLike {
@@ -23,6 +24,7 @@ export class FakeWorkspace implements WorkspaceLike {
   private currentHead: string;
   private readonly prepareError: Error | undefined;
   private readonly branchMissing: boolean;
+  private readonly leakedSecrets: string[];
 
   constructor(root: string, options: FakeWorkspaceOptions = {}) {
     this.root = root;
@@ -31,6 +33,7 @@ export class FakeWorkspace implements WorkspaceLike {
     this.currentHead = options.headSha ?? "base-sha";
     this.prepareError = options.prepareError;
     this.branchMissing = options.branchMissing ?? false;
+    this.leakedSecrets = options.leakedSecrets ?? [];
   }
 
   async prepare(input: {
@@ -102,5 +105,9 @@ export class FakeWorkspace implements WorkspaceLike {
 
   async changedPaths(): Promise<string[]> {
     return ["src/file.ts"];
+  }
+
+  async findSecrets(): Promise<string[]> {
+    return this.leakedSecrets;
   }
 }

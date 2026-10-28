@@ -165,6 +165,7 @@ tests/
 │   ├── review.test.ts
 │   ├── thread.test.ts
 │   ├── pi-runtime.test.ts
+│   ├── workspace.test.ts
 │   └── language.test.ts
 ├── integration/
 │   ├── run.test.ts

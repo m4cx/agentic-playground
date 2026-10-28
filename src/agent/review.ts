@@ -43,7 +43,35 @@ export async function handleReview(input: ReviewInput): Promise<void> {
     }
   }
 
-  const target = input.outcome.kind === "issue" ? "stopped" : input.outcome.merged ? "finished" : "stopped";
+  let target: "finished" | "stopped" =
+    input.outcome.kind === "issue" ? "stopped" : input.outcome.merged ? "finished" : "stopped";
+  let outcomeForComment = input.outcome;
+
+  // A merged pull request also closes its issue, so both review events can race. If the
+  // issue-closed event sees a known pull request, observe the pull request itself instead
+  // of guessing from the issue state.
+  if (input.outcome.kind === "issue" && record.session.pullRequestNumber !== null) {
+    try {
+      const pull = await input.client.getPullRequest(
+        input.owner,
+        input.repo,
+        record.session.pullRequestNumber,
+      );
+      target = pull.merged ? "finished" : "stopped";
+      outcomeForComment = {
+        kind: "pull-request",
+        issueNumber: input.outcome.issueNumber,
+        merged: pull.merged,
+        actor: pull.merged_by?.login ?? input.outcome.actor,
+        at: pull.merged_at ?? input.outcome.at,
+        pullRequestNumber: pull.number,
+        branch: pull.head.ref,
+      };
+    } catch {
+      // The pull request may be unavailable; keep the issue outcome.
+    }
+  }
+
   if (record.session.state === target) {
     return;
   }
@@ -56,17 +84,17 @@ export async function handleReview(input: ReviewInput): Promise<void> {
     return;
   }
 
-  const marker = outcomeMarker(input.outcome);
+  const marker = outcomeMarker(outcomeForComment);
   if (!hasMarker(comments, marker)) {
     const body = [
       marker,
       renderOutcome({
-        issueNumber: input.outcome.issueNumber,
-        actor: input.outcome.actor,
-        at: input.outcome.at,
-        merged: input.outcome.merged,
-        pullRequestNumber: input.outcome.pullRequestNumber,
-        branch: input.outcome.branch,
+        issueNumber: outcomeForComment.issueNumber,
+        actor: outcomeForComment.actor,
+        at: outcomeForComment.at,
+        merged: outcomeForComment.merged,
+        pullRequestNumber: outcomeForComment.pullRequestNumber,
+        branch: outcomeForComment.branch,
       }),
     ].join("\n");
     await input.client.createComment(input.owner, input.repo, issue.number, body);
