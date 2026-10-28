@@ -213,6 +213,24 @@ export function countRecordedContinues(bodies: readonly (string | null)[]): numb
   return count;
 }
 
+/**
+ * Plain text of an assistant message's content, which Pi reports either as a
+ * string or as an array of typed blocks. Used only for the job-log echo.
+ */
+export function assistantOutput(content: unknown): string {
+  if (typeof content === "string") return content.trim();
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const block of content) {
+    if (typeof block !== "object" || block === null) continue;
+    const record = block as Record<string, unknown>;
+    if (record["type"] === "text" && typeof record["text"] === "string") {
+      parts.push(record["text"]);
+    }
+  }
+  return parts.join("\n").trim();
+}
+
 /** Build the prompt for the run: request, version, digest, and the standing rules. */
 export function buildTaskBrief(input: {
   issue: IssuePayload;
@@ -717,6 +735,26 @@ export class Orchestrator {
     }
   }
 
+  private logPiEvent(event: Record<string, unknown>): void {
+    if (event["type"] !== "message_end") return;
+    const message = event["message"];
+    if (typeof message !== "object" || message === null) return;
+    const record = message as Record<string, unknown>;
+    if (record["role"] !== "assistant") return;
+    const text = assistantOutput(record["content"]);
+    if (text.length === 0) return;
+    // The job log is a different audience than the thread, not a trusted one:
+    // redact before echoing so the agent's own output cannot leak a credential.
+    for (const line of this.text(text).split("\n")) this.log(`agent> ${line}`);
+  }
+
+  /** Echo Pi's stderr into the job log so a failed start is diagnosable. */
+  private logPiDiagnostic(chunk: string): void {
+    for (const line of this.text(chunk).split("\n")) {
+      if (line.trim().length > 0) this.log(`pi-stderr> ${line}`);
+    }
+  }
+
   private createSession(run: ActiveRun, runtime: PiRuntime): PiSession {
     const factory =
       this.options.piFactory ??
@@ -738,6 +776,8 @@ export class Orchestrator {
       onBoundary: async (context) => {
         await this.onBoundary(run, context.stats);
       },
+      onEvent: (event) => this.logPiEvent(event),
+      onDiagnostic: (chunk) => this.logPiDiagnostic(chunk),
     };
     return factory(sessionOptions);
   }

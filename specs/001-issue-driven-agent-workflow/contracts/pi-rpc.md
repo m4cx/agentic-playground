@@ -44,6 +44,14 @@ pinned package's CLI entry — `<repoRoot>/node_modules/@earendil-works/pi-codin
 Context files (`AGENTS.md`) stay enabled: they are project documentation the agent should respect
 (the constitution is referenced there).
 
+### Job-log echo
+
+`--print` is not used: in `--mode rpc` it has no observable effect (stdout must stay reserved for
+protocol records), so it would neither show the answer nor change the protocol. Instead the
+orchestrator echoes each final assistant message to the job log as `agent> …` and Pi's stderr as
+`pi-stderr> …`, both through the same `redact` pass as thread content. The echo is for watching a run
+in the Actions log; the issue thread remains the authoritative record (FR-018, SC-010).
+
 ### Provider definition
 
 `--model` names a provider that is not built into Pi, so the provider endpoint has to come from

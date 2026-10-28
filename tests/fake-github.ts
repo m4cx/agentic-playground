@@ -295,6 +295,8 @@ export interface Harness {
   loaded: LoadedConfig;
   runId: string;
   sessionDir: string;
+  /** Every line the orchestrator wrote to its job log. */
+  logs: string[];
 }
 
 export function makeHarness(options: HarnessOptions = {}): Harness {
@@ -315,6 +317,7 @@ export function makeHarness(options: HarnessOptions = {}): Harness {
   const sessionDir = mkdtempSync(join(tmpdir(), "agent-sessions-"));
   const stubPath = resolve(process.cwd(), "dist", "tests", "stub-pi.js");
   const runId = options.runId ?? `run-${Math.random().toString(36).slice(2, 10)}`;
+  const logs: string[] = [];
 
   const env: NodeJS.ProcessEnv = {
     PATH: process.env["PATH"] ?? "",
@@ -337,7 +340,9 @@ export function makeHarness(options: HarnessOptions = {}): Harness {
     ...(options.getuid === undefined ? {} : { getuid: options.getuid }),
     headSha: async () => "abc1234",
     workspaceFactory: () => new FakeWorkspace(workspace) as unknown as Workspace,
-    log: () => undefined,
+    log: (line) => {
+      logs.push(line);
+    },
   };
 
   // Stub behaviour is read from the environment of the spawned process.
@@ -353,6 +358,7 @@ export function makeHarness(options: HarnessOptions = {}): Harness {
     loaded,
     runId,
     sessionDir,
+    logs,
   };
 }
 

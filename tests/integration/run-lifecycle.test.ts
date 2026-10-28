@@ -68,6 +68,27 @@ test("trigger → acknowledgement → turn → result → terminal state", async
   const start = log.split("\n")[0] ?? "";
   assert.match(start, /"hasGithubToken":false/);
   assert.equal(issue.number, 11);
+
+  // The agent's own output is echoed to the job log so a run is watchable.
+  assert.ok(
+    harness.logs.some((line) => line === "agent> I answered the question."),
+    "the job log echoes the agent's output",
+  );
+});
+
+test("the job-log echo is redacted with the job secrets", async () => {
+  const harness = makeHarness({
+    workspace: fakeWorkspaceState([]),
+    stubEnv: { STUB_PI_TEXT: "I used test-provider-key by mistake.\n\nagent-ignored: none\n" },
+  });
+  harness.github.addIssue({ number: 19, title: "Leak check", body: "Check the log", labels: ["agent:run"] });
+
+  const result = await harness.orchestrator.run(labelledTrigger(harness, 19));
+  assert.equal(result.status, "finished");
+  const echoed = harness.logs.filter((line) => line.startsWith("agent> "));
+  assert.ok(echoed.length > 0);
+  assert.equal(echoed.some((line) => line.includes("test-provider-key")), false);
+  assert.ok(echoed.some((line) => line.includes("[redacted]")));
 });
 
 test("a second trigger on a non-terminal issue does not start a second run", async () => {

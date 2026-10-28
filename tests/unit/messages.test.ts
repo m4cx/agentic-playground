@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { assistantOutput } from "../../src/agent/main.js";
 import {
   FAILURE_REASONS,
   marker,
@@ -251,4 +252,11 @@ test("the outcome message records the responsible person and time", () => {
   const body = samples().at(-1)?.body ?? "";
   assert.match(body, /merged by @maintainer at 2026-10-26T11:00:00.000Z/);
   assert.match(body, /`finished`/);
+});
+
+test("assistant output is extracted from string and block content", () => {
+  assert.equal(assistantOutput("plain text\n"), "plain text");
+  assert.equal(assistantOutput([{ type: "text", text: "a" }, { type: "text", text: "b" }]), "a\nb");
+  assert.equal(assistantOutput([{ type: "tool_use", id: "1" }]), "");
+  assert.equal(assistantOutput(null), "");
 });
