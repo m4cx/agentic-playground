@@ -48,6 +48,7 @@ jobs:
       - name: Resume the agent
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_TOKEN: ${{ secrets.PR_TOKEN }}
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
           AGENT_ALLOW_HOSTS: ${{ env.AGENT_ALLOW_HOSTS }}
         run: node dist/src/agent/main.js resume

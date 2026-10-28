@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { pullRequestTitle, renderPullRequestBody } from "../../src/agent/pr.js";
+import { ensurePullRequest, pullRequestTitle, renderPullRequestBody } from "../../src/agent/pr.js";
+import { AgentError } from "../../src/agent/errors.js";
+import type { GitHubClient } from "../../src/agent/github.js";
 import { createSession } from "../../src/agent/state.js";
 import type { AgentOutput } from "../../src/agent/output.js";
 
@@ -47,4 +49,30 @@ test("the PR body is always rendered from validated English fields", () => {
   assert.match(body, /## Agent result for issue #42/);
   assert.match(body, /Implemented the change\./);
   assert.match(body, /Closes #42/);
+});
+
+test("a 403 from pull-request creation becomes an actionable message", async () => {
+  const client = {
+    async listPullRequests() {
+      return [];
+    },
+    async createPullRequest() {
+      throw new AgentError(
+        "github",
+        "GitHub POST /repos/o/r/pulls failed with 403: GitHub Actions is not permitted to create or approve pull requests.",
+      );
+    },
+  } as unknown as GitHubClient;
+  await assert.rejects(
+    () =>
+      ensurePullRequest({
+        client,
+        owner: "owner",
+        repo: "repo",
+        session,
+        output: { ...output, prTitle: "Fix login timeout", prBody: "This fixes it." },
+        defaultBranch: "main",
+      }),
+    /Allow GitHub Actions to create and approve pull requests/,
+  );
 });

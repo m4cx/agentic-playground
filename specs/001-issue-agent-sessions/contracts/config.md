@@ -100,6 +100,7 @@ part of the session fingerprint.
 | Variable | Source | Visibility |
 |----------|--------|------------|
 | `GITHUB_TOKEN` | job token | orchestrator only; never passed to Pi |
+| `PR_TOKEN` | optional repository secret | orchestrator only; used only for pull-request creation when the job token is not permitted to create PRs |
 | `OLLAMA_API_KEY` | repository secret | passed to Pi so it can reach the model endpoint; never written to a comment or commit |
 | `PI_CODING_AGENT_DIR` | job setup | Pi process only; points at a run-local directory containing the reviewed `models.json` |
 | `PI_CODING_AGENT_SESSION_DIR` | job setup | Pi process only; points at the cached session directory |

@@ -74,7 +74,10 @@ async function main(): Promise<void> {
   }
 
   const loaded = loadConfig(repoRoot);
-  const client = new RestGitHubClient({ token });
+  const client = new RestGitHubClient({
+    token,
+    pullRequestToken: process.env.PR_TOKEN || undefined,
+  });
   const workRoot = process.env.RUNNER_TEMP
     ? path.join(process.env.RUNNER_TEMP, "agentic-playground")
     : path.join(repoRoot, ".agent-state", "work");

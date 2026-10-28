@@ -1,3 +1,4 @@
+import { AgentError, errorMessage } from "./errors.js";
 import type { AgentOutput } from "./output.js";
 import type { GitHubClient, PullRequest } from "./github.js";
 import type { AgentSession } from "./state.js";
@@ -59,12 +60,23 @@ export async function ensurePullRequest(input: {
   if (open) {
     return open;
   }
-  return input.client.createPullRequest(input.owner, input.repo, {
-    title: pullRequestTitle(input.session, input.output),
-    head: input.session.branchName,
-    base: input.defaultBranch,
-    body: renderPullRequestBody(input.session, input.output),
-  });
+  try {
+    return await input.client.createPullRequest(input.owner, input.repo, {
+      title: pullRequestTitle(input.session, input.output),
+      head: input.session.branchName,
+      base: input.defaultBranch,
+      body: renderPullRequestBody(input.session, input.output),
+    });
+  } catch (error) {
+    const message = errorMessage(error);
+    if (message.includes("not permitted to create or approve pull requests")) {
+      throw new AgentError(
+        "github",
+        "GitHub Actions is not permitted to create pull requests. Enable Settings > Actions > General > Allow GitHub Actions to create and approve pull requests, or add a PR_TOKEN secret with pull-request write access.",
+      );
+    }
+    throw error;
+  }
 }
 
 export function branchUrl(owner: string, repo: string, branch: string): string {

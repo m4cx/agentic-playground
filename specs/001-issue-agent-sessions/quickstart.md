@@ -48,13 +48,20 @@ gh secret set OLLAMA_API_KEY
 The key is available to the orchestrator and passed only to the Pi child. It is never written to a
 comment, commit, or PR.
 
+Optional: `gh secret set PR_TOKEN` if `GITHUB_TOKEN` is not allowed to create pull requests.
+
 ### 4. Grant workflow permissions
 
 Repository **Settings → Actions → General → Workflow permissions**:
 
 - Select **Read and write permissions**.
-- Allow GitHub Actions to create and approve pull requests (needed to open the review PR).
+- Allow GitHub Actions to create and approve pull requests (needed to open the review PR). Without this
+  setting, the branch is pushed but PR creation fails with HTTP 403.
 - Do not allow fork pull requests to run workflows with write tokens.
+
+If the repository policy cannot enable that setting, create a fine-grained `PR_TOKEN` secret with
+**Contents: Read** and **Pull requests: Write** for this repository. The orchestrator uses it only for
+pull-request creation; the GitHub App token still performs every other operation.
 
 The workflow itself requests only:
 
