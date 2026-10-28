@@ -85,6 +85,7 @@ export interface GitHubClient {
 
 export interface RestGitHubClientOptions {
   token: string;
+  pullRequestToken?: string;
   baseUrl?: string;
   fetchImpl?: typeof fetch;
 }
@@ -97,23 +98,29 @@ interface RequestOptions {
 
 export class RestGitHubClient implements GitHubClient {
   private readonly token: string;
+  private readonly pullRequestToken: string | undefined;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: RestGitHubClientOptions) {
     this.token = options.token;
+    this.pullRequestToken = options.pullRequestToken;
     this.baseUrl = (options.baseUrl ?? "https://api.github.com").replace(/\/+$/, "");
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
-  private async request<T>(pathname: string, options: RequestOptions = {}): Promise<T | null> {
+  private async request<T>(
+    pathname: string,
+    options: RequestOptions = {},
+    token = this.token,
+  ): Promise<T | null> {
     let response: Response;
     try {
       response = await this.fetchImpl(`${this.baseUrl}${pathname}`, {
         method: options.method ?? "GET",
         headers: {
           Accept: "application/vnd.github+json",
-          Authorization: `Bearer ${this.token}`,
+          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
           "X-GitHub-Api-Version": "2022-11-28",
           "User-Agent": "agentic-playground-agent",
@@ -255,10 +262,11 @@ export class RestGitHubClient implements GitHubClient {
     repo: string,
     input: { title: string; head: string; base: string; body: string },
   ): Promise<PullRequest> {
-    const result = await this.request<PullRequest>(`/repos/${owner}/${repo}/pulls`, {
-      method: "POST",
-      body: input,
-    });
+    const result = await this.request<PullRequest>(
+      `/repos/${owner}/${repo}/pulls`,
+      { method: "POST", body: input },
+      this.pullRequestToken ?? this.token,
+    );
     if (!result) {
       throw new AgentError("github", "pull request creation returned no body");
     }
