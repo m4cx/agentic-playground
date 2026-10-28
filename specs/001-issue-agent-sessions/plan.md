@@ -142,10 +142,13 @@ src/agent/
 ├── pi-runtime.ts             # Resolve pinned Pi binary and build the unprivileged environment
 ├── pr.ts                     # Pull request create/update and link rendering
 ├── review.ts                 # Merge/close outcome handling
+├── output.ts                 # Structured agent output parsing and validation
 ├── messages.ts               # English thread message templates
 └── redact.ts                 # Secret and credential redaction before posting
 
 tests/
+├── fake-github.ts            # In-memory GitHub client used by integration tests
+├── fake-rpc.ts               # Scripted Pi RPC peer used by integration tests
 ├── unit/
 │   ├── config.test.ts
 │   ├── slug.test.ts
@@ -153,7 +156,12 @@ tests/
 │   ├── trigger.test.ts
 │   ├── permissions.test.ts
 │   ├── messages.test.ts
-│   └── redact.test.ts
+│   ├── redact.test.ts
+│   ├── output.test.ts
+│   ├── review.test.ts
+│   ├── thread.test.ts
+│   ├── pi-runtime.test.ts
+│   └── language.test.ts
 ├── integration/
 │   ├── run.test.ts
 │   ├── resume.test.ts
