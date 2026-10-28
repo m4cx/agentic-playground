@@ -135,8 +135,21 @@ export function validateAgentOutput(raw: unknown, secrets: readonly string[] = [
   const couldNotComplete = englishList(raw.couldNotComplete, "couldNotComplete", 20, 1000).map((item) =>
     redactRequired(item, "couldNotComplete", secrets),
   );
-  const prTitle = redactRequired(englishString(raw.prTitle, "prTitle", 1, 120), "prTitle", secrets);
-  const prBody = redactRequired(englishString(raw.prBody, "prBody", 1, 8000), "prBody", secrets);
+  // The pull-request title and body are presentation fields. If the model ignores the
+  // English rule for them, the orchestrator uses its own English template instead of
+  // failing the whole run. The summary and the other durable fields stay strict.
+  let prTitle = "";
+  try {
+    prTitle = redactRequired(englishString(raw.prTitle, "prTitle", 1, 120), "prTitle", secrets);
+  } catch {
+    prTitle = "";
+  }
+  let prBody = "";
+  try {
+    prBody = redactRequired(englishString(raw.prBody, "prBody", 1, 8000), "prBody", secrets);
+  } catch {
+    prBody = "";
+  }
 
   if (raw.state !== "finished" && raw.state !== "waiting") {
     fail('state must be "finished" or "waiting"');
@@ -144,7 +157,7 @@ export function validateAgentOutput(raw: unknown, secrets: readonly string[] = [
   if (raw.state === "waiting" && openQuestions.length === 0) {
     fail("state waiting requires at least one open question");
   }
-  if (/\b(merged|merge it|i merged)\b/i.test(prBody)) {
+  if (prBody.length > 0 && /\b(merged|merge it|i merged)\b/i.test(prBody)) {
     fail("prBody must not claim a merge");
   }
 

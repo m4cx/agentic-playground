@@ -36,6 +36,12 @@ export function renderPullRequestBody(session: AgentSession, output: AgentOutput
   ].join("\n");
 }
 
+export function pullRequestTitle(session: AgentSession, output: AgentOutput): string {
+  return output.prTitle.trim().length > 0
+    ? output.prTitle
+    : `Agent work for issue #${session.issueNumber}`;
+}
+
 export async function ensurePullRequest(input: {
   client: GitHubClient;
   owner: string;
@@ -54,7 +60,7 @@ export async function ensurePullRequest(input: {
     return open;
   }
   return input.client.createPullRequest(input.owner, input.repo, {
-    title: input.output.prTitle,
+    title: pullRequestTitle(input.session, input.output),
     head: input.session.branchName,
     base: input.defaultBranch,
     body: renderPullRequestBody(input.session, input.output),

@@ -121,8 +121,8 @@ The agent's final assistant message must end with one fenced `json` block:
 | `verification` | string[] | English, ≤ 20 items, each ≤ 500 characters; may be empty |
 | `openQuestions` | string[] | English, ≤ 10 items; required non-empty when `state == "waiting"` |
 | `couldNotComplete` | string[] | English, ≤ 20 items; non-empty means the run is not a full success |
-| `prTitle` | string | English, 1..120 characters |
-| `prBody` | string | English, 1..8000 characters; must not claim a merge |
+| `prTitle` | string | English, 1..120 characters; if invalid, the orchestrator uses `Agent work for issue #<n>` |
+| `prBody` | string | English, 1..8000 characters; must not claim a merge; if invalid, the orchestrator renders the body from the validated summary and verification fields |
 | `state` | `"finished" \| "waiting"` | `waiting` only when a human answer is required |
 
 ### Parsing
@@ -131,8 +131,11 @@ The agent's final assistant message must end with one fenced `json` block:
 2. Find the last fenced block whose info string is `json`.
 3. Parse it with `JSON.parse`.
 4. Validate every field and length; reject unknown top-level keys.
-5. If parsing or validation fails, the run fails with `agent-output`; the orchestrator posts a failure
-   comment containing the parse error category, not the raw model output.
+5. If parsing or a durable field (`summary`, `verification`, `openQuestions`, `couldNotComplete`) fails
+   validation, the run fails with `agent-output`; the orchestrator posts a failure comment containing
+   the parse error category, not the raw model output. The presentation fields `prTitle` and `prBody`
+   are not fatal: the orchestrator substitutes an English template so a non-English PR description
+   cannot fail an otherwise valid run.
 6. If `couldNotComplete` is non-empty, the rendered summary lists it and the state is `waiting` when
    `state == "waiting"`, otherwise `finished` with a prominent incomplete section. A `finished` result
    with `couldNotComplete` is allowed only if the agent explains why the remainder is out of scope.

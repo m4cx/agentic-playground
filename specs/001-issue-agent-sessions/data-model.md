@@ -191,8 +191,10 @@ The structured result the agent must emit at the end of a run.
 | `state` | `"finished" \| "waiting"` | `waiting` requires at least one open question |
 
 **Validation**: the orchestrator extracts the last fenced ```json block from the final assistant
-message. A missing or invalid block fails the run with `agent-output`. The orchestrator redacts every
-field before rendering and truncates it to the limits above. A `couldNotComplete` entry prevents the
+message. A missing or invalid block fails the run with `agent-output`. The `prTitle` and `prBody`
+fields are presentation-only: if either is non-English or invalid, the orchestrator substitutes its
+own English title/body template instead of failing the run. The orchestrator redacts every field
+before rendering and truncates it to the limits above. A `couldNotComplete` entry prevents the
 session from being reported as fully finished; the resulting state is `waiting` or `failed` depending
 on whether a human answer can unblock it.
 
