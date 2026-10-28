@@ -1,0 +1,9 @@
+{"type":"response","command":"set_auto_retry","success":true}
+{"type":"response","command":"get_state","success":true,"data":{"sessionId":"issue-42-a1b2c3d4","isStreaming":false}}
+{"type":"response","command":"prompt","success":true,"data":{"disposition":"started"}}
+{"type":"agent_start"}
+{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Working."}}
+{"type":"agent_end"}
+{"type":"agent_settled"}
+{"type":"response","command":"get_last_assistant_text","success":true,"data":{"text":"```json\n{\"summary\":\"done\",\"verification\":[],\"openQuestions\":[],\"couldNotComplete\":[],\"prTitle\":\"Done\",\"prBody\":\"Done.\",\"state\":\"finished\"}\n```"}}
+{"type":"response","command":"get_session_stats","success":true,"data":{"tokens":10}}

@@ -429,3 +429,6 @@ FodyWeavers.xsd
 
 # TypeScript build output of the agent orchestrator (tsc outDir)
 dist/
+
+# Run-local Pi session cache for the issue-driven agent
+.agent-state/

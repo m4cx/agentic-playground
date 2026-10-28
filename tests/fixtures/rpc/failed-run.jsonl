@@ -1,0 +1,5 @@
+{"type":"response","command":"set_auto_retry","success":true}
+{"type":"response","command":"get_state","success":true,"data":{"sessionId":"issue-42-a1b2c3d4","isStreaming":false}}
+{"type":"response","command":"prompt","success":true,"data":{"disposition":"started"}}
+{"type":"auto_retry_scheduled","attempt":1}
+{"type":"agent_settled"}

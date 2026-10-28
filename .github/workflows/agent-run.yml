@@ -1,0 +1,48 @@
+name: agent-run
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: agent-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    if: github.event.label.name == 'agent:run'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Restore the Pi session cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/agentic-playground/sessions
+          key: agent-session-${{ github.event.issue.number }}-${{ hashFiles('.agent/instructions.md', '.agent/config.json', '.agent/models.json') }}-${{ github.run_id }}
+          restore-keys: |
+            agent-session-${{ github.event.issue.number }}-${{ hashFiles('.agent/instructions.md', '.agent/config.json', '.agent/models.json') }}-
+      - name: Read the egress allowlist
+        id: config
+        run: |
+          node -e 'const c=require("./.agent/config.json"); process.stdout.write(c.network.allowHosts.join(","))' > /tmp/allow-hosts
+          echo "AGENT_ALLOW_HOSTS=$(cat /tmp/allow-hosts)" >> "$GITHUB_ENV"
+      - name: Apply the agent egress policy
+        run: sudo --preserve-env=AGENT_ALLOW_HOSTS,AGENT_EGRESS_UID,AGENT_EGRESS_USER,GITHUB_ENV bash .github/scripts/agent-egress.sh
+      - name: Run the agent
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+          AGENT_ALLOW_HOSTS: ${{ env.AGENT_ALLOW_HOSTS }}
+        run: node dist/src/agent/main.js run

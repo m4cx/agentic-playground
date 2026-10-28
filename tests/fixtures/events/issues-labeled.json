@@ -1,0 +1,12 @@
+{
+  "action": "labeled",
+  "issue": {
+    "number": 42,
+    "title": "Fix login timeout",
+    "state": "open",
+    "labels": [],
+    "pull_request": null
+  },
+  "label": { "name": "agent:run" },
+  "sender": { "login": "maintainer", "type": "User" }
+}

@@ -1,0 +1,16 @@
+{
+  "action": "created",
+  "issue": {
+    "number": 42,
+    "title": "Fix login timeout",
+    "state": "open",
+    "labels": []
+  },
+  "comment": {
+    "id": 9001,
+    "body": "/agent continue Add a regression test for the cookie path.",
+    "user": { "login": "maintainer", "type": "User" },
+    "created_at": "2026-10-28T12:00:00Z"
+  },
+  "sender": { "login": "maintainer", "type": "User" }
+}

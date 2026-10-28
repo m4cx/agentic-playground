@@ -1,0 +1,22 @@
+{
+  "name": "agentic-playground",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Issue-driven coding agent sessions on GitHub Actions with the Pi harness",
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test dist/tests"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  }
+}

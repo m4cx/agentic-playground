@@ -1,0 +1,10 @@
+{
+  "action": "closed",
+  "issue": {
+    "number": 42,
+    "title": "Fix login timeout",
+    "state": "closed",
+    "labels": []
+  },
+  "sender": { "login": "maintainer" }
+}

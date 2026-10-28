@@ -1,0 +1,5 @@
+{"type":"response","command":"set_auto_retry","success":true}
+{"type":"response","command":"get_state","success":true,"data":{"sessionId":"issue-42-a1b2c3d4","isStreaming":false}}
+{"type":"response","command":"prompt","success":true,"data":{"disposition":"started"}}
+{"type":"agent_settled"}
+{"type":"response","command":"get_last_assistant_text","success":true,"data":{"text":"```json\n{\"summary\":\"Need a decision.\",\"verification\":[],\"openQuestions\":[\"Which cookie path?\"],\"couldNotComplete\":[],\"prTitle\":\"WIP\",\"prBody\":\"WIP.\",\"state\":\"waiting\"}\n```"}}

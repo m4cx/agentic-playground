@@ -33,14 +33,18 @@ jobs (solved by D5).
 
 ## D2 — How the orchestrator drives Pi
 
-**Decision**: Pi in **RPC mode** (`pi --mode rpc`), driven by the exported `RpcClient` from
-`@earendil-works/pi-coding-agent` 1.4.0.
+**Decision**: Pi in **RPC mode** (`pi --mode rpc`), driven by a small JSONL client over the
+documented protocol. The orchestrator launches the pinned CLI with `sudo -u agent-egress`; the
+shipped `RpcClient` is not used because it always spawns `node` as the current user and would bypass
+the UID boundary.
 
 **Rationale**: The orchestrator must start a long-running session, observe completion
 (`agent_settled`), enforce a deadline, disable automatic retries (`set_auto_retry`), and resume the
 same conversation by ID. RPC provides all of this over a documented JSONL wire protocol and keeps
-Pi in a child process, which is required for the privilege split in D3. The SDK would embed Pi in the
-orchestrator, collapsing the process boundary that keeps the GitHub token out of the agent.
+Pi in a child process, which is required for the privilege split in D3. A small client is enough:
+the used subset is `set_auto_retry`, `get_state`, `prompt`, `get_last_assistant_text`,
+`get_session_stats`, and `abort`. The SDK would embed Pi in the orchestrator, collapsing the process
+boundary that keeps the GitHub token out of the agent.
 
 **Alternatives considered**:
 - *Print mode (`-p`)*: only the final text is visible; no state inspection, no clean abort, no

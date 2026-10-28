@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "triggerLabel": "agent:run",
+  "resumeCommand": "/agent continue",
+  "slugMaxLength": 50,
+  "maxComments": 100,
+  "maxCommentCharacters": 8000,
+  "model": "ollama-cloud/kimi-k2.7-code",
+  "thinking": "high",
+  "tools": ["read", "bash", "edit", "write", "grep", "find", "ls"],
+  "instructionsPath": ".agent/instructions.md",
+  "agentDeadlineMinutes": 45,
+  "network": {
+    "allowHosts": ["ollama.com", "registry.npmjs.org"]
+  }
+}

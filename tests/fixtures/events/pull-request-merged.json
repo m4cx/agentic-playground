@@ -1,0 +1,20 @@
+{
+  "action": "closed",
+  "pull_request": {
+    "number": 7,
+    "html_url": "https://github.com/owner/repo/pull/7",
+    "state": "closed",
+    "merged": true,
+    "merged_by": { "login": "maintainer" },
+    "merged_at": "2026-10-28T13:00:00Z",
+    "head": {
+      "ref": "feature/42-fix-login-timeout",
+      "sha": "abc123",
+      "repo": { "name": "repo", "owner": { "login": "owner" } }
+    },
+    "base": { "ref": "main" },
+    "body": "Closes #42",
+    "title": "Fix login timeout"
+  },
+  "sender": { "login": "maintainer" }
+}

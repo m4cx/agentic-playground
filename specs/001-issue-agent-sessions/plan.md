@@ -26,7 +26,8 @@ thread and the branch.
 behaviour in Markdown instructions.
 
 **Primary Dependencies**: `@earendil-works/pi-coding-agent` pinned to `1.4.0`, consumed through its
-documented RPC protocol and the exported `RpcClient`. GitHub access uses the Node built-in `fetch`.
+documented RPC protocol by a small JSONL client (`src/agent/pi.ts`) so the child can run as a
+different UID. GitHub access uses the Node built-in `fetch`.
 Tests use `node:test`. Development dependencies are `typescript` and `@types/node` only.
 
 **Storage**: No database. The issue thread is the authoritative session record: one bot comment holds
@@ -144,11 +145,14 @@ src/agent/
 ├── review.ts                 # Merge/close outcome handling
 ├── output.ts                 # Structured agent output parsing and validation
 ├── messages.ts               # English thread message templates
-└── redact.ts                 # Secret and credential redaction before posting
+├── redact.ts                 # Secret and credential redaction before posting
+└── errors.ts                 # Failure codes and the shared AgentError type
 
 tests/
 ├── fake-github.ts            # In-memory GitHub client used by integration tests
 ├── fake-rpc.ts               # Scripted Pi RPC peer used by integration tests
+├── fake-workspace.ts         # In-memory Git workspace used by integration tests
+└── session-fixture.ts        # Shared session, trigger, and dependency builders
 ├── unit/
 │   ├── config.test.ts
 │   ├── slug.test.ts

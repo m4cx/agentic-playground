@@ -20,7 +20,7 @@ This contract fixes the Pi integration surface. It is implemented by `src/agent/
 ```text
 node <resolved-pi-cli> --mode rpc \
   --session-id issue-<n>-<fingerprint8> \
-  --session-dir <workspace>/.agent-state/sessions \
+  --session-dir ${RUNNER_TEMP}/agentic-playground/sessions \
   --model <provider>/<model> \
   --thinking <level> \
   --tools read,bash,edit,write,grep,find,ls \
@@ -67,7 +67,8 @@ home so it can edit files and install packages.
 
 ## Session cache
 
-- Cache path: `<workspace>/.agent-state/sessions`.
+- Cache path: `${RUNNER_TEMP}/agentic-playground/sessions`, restored by `actions/cache` in both
+  agent workflows and shared across runs of the same issue.
 - Cache key: `agent-session-<issue-number>-<fingerprint8>-<run-id>`.
 - Restore keys: `agent-session-<issue-number>-<fingerprint8>-`.
 - The cache is saved at the end of every run, including failed runs, so a later resume can reuse the
