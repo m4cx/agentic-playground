@@ -320,7 +320,7 @@ export function makeHarness(options: HarnessOptions = {}): Harness {
     PATH: process.env["PATH"] ?? "",
     HOME: process.env["HOME"] ?? "",
     GITHUB_TOKEN: "test-token-value",
-    ANTHROPIC_API_KEY: "test-provider-key",
+    OLLAMA_API_KEY: "test-provider-key",
     ...options.env,
   };
 

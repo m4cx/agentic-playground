@@ -7,6 +7,9 @@
 **Amendment**: 2026-10-27 — Pi runtime provisioning in GitHub Actions; see
 [§Amendment 2026-10-27](#amendment-2026-10-27-pi-runtime-provisioning-in-github-actions).
 
+**Amendment**: 2026-10-28 — Ollama Cloud is the only model provider for the first step; see
+[§Amendment 2026-10-28](#amendment-2026-10-28-ollama-cloud-as-the-model-provider).
+
 **Additional input (this planning round)**: the remote agent must run on the Pi harness
 (`pi.dev`, `@earendil-works/pi-coding-agent`), the same harness used locally.
 
@@ -145,6 +148,7 @@ tsconfig.json                 # strict, module nodenext, rootDir ., outDir dist
 ├── instructions.md           # Standing instructions appended to Pi's system prompt
 ├── config.yml                # Single schema: model, thinking, tools, prompt templates, labels,
 │                             # limits, proposal bounds, global halt issue, egress allowlist
+├── models.json               # Provider endpoint and model list Pi loads from its agent directory
 └── README.md                 # How a maintainer changes agent behaviour
 
 src/agent/
@@ -533,3 +537,62 @@ declared, so Complexity Tracking stays empty.
 Full syscall/filesystem sandboxing (seccomp, PID or mount namespaces) and a container-based runner are
 not introduced. The process-group teardown, the uid-wide reap, and the git-directory separation close
 the concrete paths this feature opens; a general sandbox is a separate change.
+
+---
+
+## Amendment 2026-10-28: Ollama Cloud as the model provider
+
+The maintainer decided that the first step uses **only** Ollama Cloud. Anthropic credentials are
+obsolete: no workflow requests `ANTHROPIC_API_KEY`, no code reads it, and `.agent/config.yml` no
+longer names an Anthropic model or host.
+
+### Decision D18 — provider endpoints are reviewed repository content
+
+Pi 1.4.0 has no built-in Ollama provider, so the endpoint is defined in `.agent/models.json`
+(`baseUrl: https://ollama.com/v1`, `api: openai-completions`, `apiKey: $OLLAMA_API_KEY`). Because Pi
+reads `models.json` from its agent directory, the orchestrator copies the reviewed file into
+`<session-dir>/pi-agent/` and sets `PI_CODING_AGENT_DIR` there before spawning Pi. The copy is
+root-owned, so the agent cannot redirect its own provider; the key is interpolated from the
+environment and never stored in the file (research D18).
+
+`.agent/config.yml` therefore pins `model: ollama-cloud/kimi-k2.7-code` and sets
+`network.allowHosts` to `ollama.com`, which serves both inference and authentication. The provider
+prefix is part of the model string and therefore part of the configuration fingerprint, so switching
+providers cannot resume a session produced under another provider.
+
+### Files touched by this amendment
+
+| File | Change |
+|------|--------|
+| `.agent/models.json` (new) | Declares the `ollama-cloud` provider and the model entry used by the agent |
+| `.agent/config.yml` | `model` is `ollama-cloud/kimi-k2.7-code`; `network.allowHosts` is `ollama.com` |
+| `.agent/README.md` | Documents `models.json`, the agent-directory copy, and the cost consequence |
+| `.github/workflows/agent-run.yml`, `agent-command.yml` | Write and export `OLLAMA_API_KEY` instead of `ANTHROPIC_API_KEY` |
+| `.github/scripts/agent-egress.sh` | Example allowlist host updated in the usage comment |
+| `src/agent/pi-runtime.ts` | `AGENT_ENV_KEYS` permits `OLLAMA_API_KEY` instead of `ANTHROPIC_API_KEY` |
+| `src/agent/pi-session.ts` | Install `.agent/models.json` into the per-run agent directory; export `PI_CODING_AGENT_DIR` |
+| `src/agent/main.ts` | Redact `OLLAMA_API_KEY` instead of the provider keys of unused providers |
+| `specs/.../contracts/config.md`, `contracts/pi-rpc.md`, `research.md`, `quickstart.md`, `tasks.md` | Provider name, secret name, and the `models.json` contract |
+| `tests/**` | Stub provider/model, fixture configs, env-file keys, and a new launch test for the `models.json` copy |
+
+### Acceptance for the amendment
+
+| Check | Expected |
+|-------|----------|
+| A run starts with only `OLLAMA_API_KEY` in `AGENT_ENV_FILE` | Pi reaches `https://ollama.com/v1` and every other egress from the agent uid is dropped |
+| `.agent/models.json` is missing or malformed | Pi cannot resolve `--model`; the run fails with `environment` before a result comment |
+| The agent tries to rewrite its provider file | Denied: the copied file is root-owned |
+| The configured model or provider changes | The configuration fingerprint and cache key change; no cross-provider session is resumed |
+
+### Constitution check for the amendment
+
+All new and changed artifacts are in English. No credential is committed: `models.json` references
+`$OLLAMA_API_KEY` and the value comes from repository secrets. The amendment narrows the credential
+surface (one provider, one key) and does not relax an existing guarantee.
+
+### Known limitation recorded by this amendment
+
+Ollama Cloud publishes no per-token prices, so the model entry has no `cost` table and Pi reports a
+cost of zero. FR-017's `limits.maxCostUsd` therefore cannot bind in this configuration;
+`limits.maxTurns` and `limits.maxWallClockMinutes` remain the effective ceilings. Per-token accounting
+would require a `cost` block in `.agent/models.json` and a re-evaluation of research D6.

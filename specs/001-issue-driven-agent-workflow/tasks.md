@@ -634,7 +634,7 @@ safe to hand to the agent before git runs as root.
       and, when `egressUid` is set, reap every process owned by `AGENT_EGRESS_UID` before returning.
       Inject the kill/reap operations (or a `spawnImpl`) so tests can assert the order without root.
 - [X] T097 Update `src/agent/main.ts`: read `AGENT_ENV_FILE` once (mode `0600`), unlink it immediately,
-      merge `GITHUB_TOKEN` and `ANTHROPIC_API_KEY` into the orchestrator environment, and keep the
+      merge `GITHUB_TOKEN` and `OLLAMA_API_KEY` into the orchestrator environment, and keep the
       existing `sanitizeEnvironment` stripping for the Pi child. Resolve the Pi runtime *before* posting
       `agent:ack`; assert uid 0 when `AGENT_EGRESS_UID` is set; pass the runtime to `createSession`; use
       `runtime.version` in the acknowledgement instead of a literal. A resolution or privilege failure
@@ -654,7 +654,7 @@ safe to hand to the agent before git runs as root.
       unwritable. Any inverted result throws a workspace error with reason `environment`. Accept a
       `uid`/`spawnProbe` seam so the probe is unit-testable without root.
 - [X] T100 [P] Update `.github/workflows/agent-run.yml`: write a mode-`0600` `AGENT_ENV_FILE`
-      containing `GITHUB_TOKEN` and `ANTHROPIC_API_KEY`; run the `run` mode through
+      containing `GITHUB_TOKEN` and `OLLAMA_API_KEY`; run the `run` mode through
       `sudo --preserve-env=GITHUB_EVENT_PATH,GITHUB_EVENT_NAME,GITHUB_REPOSITORY,GITHUB_RUN_ID,GITHUB_WORKSPACE,RUNNER_TEMP,AGENT_EGRESS_UID,AGENT_ENV_FILE`
       with `"$(command -v node)" dist/src/agent/main.js run`; leave `prepare` unprivileged.
 - [X] T101 [P] Update `.github/workflows/agent-command.yml` with the same env-file and `sudo
@@ -680,7 +680,7 @@ the egress uid. These are verification tasks; the feature behaviour is unchanged
 
 - [X] T104 [P] [US1] Add `tests/integration/pi-launch.test.ts`: assert the spawned command is
       `process.execPath` with the resolved `entry`, `--mode rpc` is present, no bare `pi` is spawned,
-      the child environment contains `ANTHROPIC_API_KEY` but no `GITHUB_TOKEN`/`GH_TOKEN`, and `cwd` is
+      the child environment contains `OLLAMA_API_KEY` but no `GITHUB_TOKEN`/`GH_TOKEN`, and `cwd` is
       the repository root.
 - [X] T105 [US1] Update `tests/integration/run-lifecycle.test.ts`: the `agent:ack` reports the injected
       runtime version (not a constant), the run reaches `finished` against the stub, and a runtime
@@ -846,6 +846,26 @@ the privilege/workspace boundary and re-validates the other stories.
 
 ---
 
+## Amendment 2026-10-28: Ollama Cloud provider
+
+- [X] T120 [P] Add `.agent/models.json` declaring the `ollama-cloud` provider
+      (`baseUrl: https://ollama.com/v1`, `api: openai-completions`, `apiKey: $OLLAMA_API_KEY`) and the
+      `kimi-k2.7-code` model entry.
+- [X] T121 Update `.agent/config.yml` to `model: ollama-cloud/kimi-k2.7-code` and
+      `network.allowHosts: [ollama.com]`; update `.agent/README.md` with the provider file, the
+      agent-directory copy, and the cost consequence.
+- [X] T122 Update `src/agent/pi-session.ts` to copy `.agent/models.json` into
+      `<sessionDir>/pi-agent/models.json` as a root-owned file and export `PI_CODING_AGENT_DIR`.
+- [X] T123 [P] Replace `ANTHROPIC_API_KEY` with `OLLAMA_API_KEY` in `src/agent/pi-runtime.ts`,
+      `src/agent/main.ts`, the `run`/`command` workflows, and the egress-script usage comment.
+- [X] T124 [P] Update tests and fixtures to the Ollama Cloud model, provider, allowlist host, and
+      secret name; add a launch test for the `models.json` copy.
+
+**Checkpoint**: `.agent/config.yml` names no Anthropic model or host; `rg -i anthropic src .github
+.agent` finds no provider dependency; `npm test` passes.
+
+---
+
 ## Amendment Traceability
 
 | Concern | Tasks |
@@ -860,6 +880,7 @@ the privilege/workspace boundary and re-validates the other stories.
 | SC-015 (explicit trigger) | T105 |
 | Constitution I, FR-019 (English artifacts) | T118 |
 | Quickstart S15 | T111, T115, T116 |
+| Amendment 2026-10-28: Ollama Cloud provider | T120–T124 |
 
 ---
 

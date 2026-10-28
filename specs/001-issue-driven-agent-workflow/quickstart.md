@@ -9,9 +9,11 @@ machine's terminal beyond creating the issue.
 ## Prerequisites
 
 1. A sandbox repository with these committed on the default branch:
-   - `.agent/instructions.md` and `.agent/config.yml` ([plan.md](./plan.md) structure) matching the
-     schema in [contracts/config.md](./contracts/config.md), including the `promptTemplates:` allowlist
-     (default: `speckit.specify`, `speckit.plan`, `speckit.tasks` — an explicit list, not a glob)
+   - `.agent/instructions.md`, `.agent/config.yml` and `.agent/models.json` ([plan.md](./plan.md)
+     structure) matching the schema in [contracts/config.md](./contracts/config.md), including the
+     `promptTemplates:` allowlist (default: `speckit.specify`, `speckit.plan`, `speckit.tasks` — an
+     explicit list, not a glob). `models.json` defines the Ollama Cloud provider; the agent-directory
+     copy is described in [contracts/pi-rpc.md](./contracts/pi-rpc.md) §"Provider definition".
    - `.github/workflows/agent-run.yml`, `agent-command.yml`, `agent-proposal.yml`, and `agent-sweep.yml`,
      plus `.github/scripts/agent-egress.sh`
    - `package.json`, `tsconfig.json`, `src/agent/**` (TypeScript) and `tests/**` (TypeScript)
@@ -25,9 +27,9 @@ machine's terminal beyond creating the issue.
    - Labels created: `agent:run`, `agent:queued`, `agent:working`, `agent:waiting`, `agent:halted`,
      `agent:finished`, `agent:failed`, `agent:rejected`, `agent:proposal`
      ([contracts/labels.md](./contracts/labels.md)).
-   - The provider API key stored as a repository secret. It is the only secret the agent job exposes
-     to Pi. The model and thinking level are **not** secrets: they live in `.agent/config.yml` so that a
-     change is reviewable (`contracts/config.md`).
+   - The provider API key stored as the repository secret `OLLAMA_API_KEY` (Ollama Cloud). It is the
+     only secret the agent job exposes to Pi. The model and thinking level are **not** secrets: they
+     live in `.agent/config.yml` so that a change is reviewable (`contracts/config.md`).
 3. A second account without write access, for the permission scenarios.
 
 ## Local checks (no CI required)
@@ -187,6 +189,12 @@ anywhere (the agent process has no `GITHUB_TOKEN` at all); no self-approval. Run
 replay it — the orchestrator must post the notice saying that no directive report was produced.
 
 ### S8 — Consumption stays bounded (SC-012, FR-017)
+
+> **Provider note (amendment 2026-10-28)**: Ollama Cloud publishes no per-token prices, so Pi reports
+> a cost of zero and `limits.maxCostUsd` cannot bind. Until a `cost` table is added to
+> `.agent/models.json`, validate this scenario through `limits.maxTurns` (or
+> `limits.maxWallClockMinutes`) instead of the USD cap. The limit machinery is the same; only the
+> counter that trips it differs.
 
 1. Lower `limits.maxCostUsd` in `.agent/config.yml` to a deliberately small value and merge it.
 2. Trigger a run that will exceed it.

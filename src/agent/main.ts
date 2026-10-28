@@ -352,7 +352,7 @@ export class Orchestrator {
     this.log = options.log ?? ((line) => process.stdout.write(`${line}\n`));
     this.secrets = [
       ...(options.secrets ?? []),
-      ...["GITHUB_TOKEN", "GH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"].map(
+      ...["GITHUB_TOKEN", "GH_TOKEN", "OLLAMA_API_KEY"].map(
         (key) => options.environment?.[key] ?? "",
       ),
     ].filter((value) => value.length > 0);

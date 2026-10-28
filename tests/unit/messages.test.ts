@@ -39,7 +39,7 @@ function samples(): Array<{ kind: (typeof MESSAGE_KINDS)[number]; body: string }
         instructionsPath: ".agent/instructions.md",
         instructionsSha: "def456",
         fingerprint: "1234567890ab",
-        model: "anthropic/claude-sonnet-4-5",
+        model: "ollama-cloud/kimi-k2.7-code",
         piVersion: "1.4.0",
         thinking: "high",
         capUsd: 5,

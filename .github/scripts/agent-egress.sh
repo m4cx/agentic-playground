@@ -17,7 +17,7 @@
 # failure reason `environment` without ever starting the agent.
 #
 # Usage: agent-egress.sh [comma-separated-hosts]
-#        AGENT_ALLOW_HOSTS=api.anthropic.com agent-egress.sh
+#        AGENT_ALLOW_HOSTS=ollama.com agent-egress.sh
 #        AGENT_EGRESS_UID=1500 agent-egress.sh   # uid to create and scope to
 
 set -euo pipefail

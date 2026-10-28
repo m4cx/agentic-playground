@@ -10,9 +10,18 @@
  */
 
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { chownSync, existsSync, lstatSync, mkdirSync, readdirSync } from "node:fs";
+import {
+  chmodSync,
+  chownSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, join } from "node:path";
-import type { AgentConfig } from "./config.js";
+import { MODELS_CONFIG_PATH, type AgentConfig } from "./config.js";
 import { reapEgressProcesses, type PiRuntime } from "./pi-runtime.js";
 
 export interface SessionStats {
@@ -263,11 +272,25 @@ export class PiSession {
     const homeDir = join(options.sessionDir, "home");
     const tmpDir = join(options.sessionDir, "tmp");
     const cacheDir = join(options.sessionDir, "cache");
+    const agentDir = join(options.sessionDir, "pi-agent");
     try {
-      for (const directory of [options.sessionDir, homeDir, tmpDir, cacheDir]) {
+      for (const directory of [options.sessionDir, homeDir, tmpDir, cacheDir, agentDir]) {
         ensureRealDirectory(directory);
         if (options.egressUid !== undefined && process.getuid?.() === 0) {
           chownSync(directory, options.egressUid, options.egressGid ?? options.egressUid);
+        }
+      }
+      // Provider endpoints are repository content, not a machine-local file. The
+      // copied file stays root-owned so the agent cannot redirect its own provider;
+      // the directory stays writable so Pi's own migrations can run there.
+      const modelsSource = join(options.repoRoot, MODELS_CONFIG_PATH);
+      if (existsSync(modelsSource)) {
+        const modelsTarget = join(agentDir, "models.json");
+        writeFileSync(modelsTarget, readFileSync(modelsSource), { mode: 0o644 });
+        // A cache-restored file keeps its old mode, so set it explicitly.
+        chmodSync(modelsTarget, 0o644);
+        if (options.egressUid !== undefined && process.getuid?.() === 0) {
+          chownSync(modelsTarget, 0, 0);
         }
       }
     } catch (error) {
@@ -280,6 +303,7 @@ export class PiSession {
     env["HOME"] = homeDir;
     env["TMPDIR"] = tmpDir;
     env["XDG_CACHE_HOME"] = cacheDir;
+    env["PI_CODING_AGENT_DIR"] = agentDir;
 
     try {
       this.child = spawnImpl(options.runtime.nodePath, [options.runtime.entry, ...args], {

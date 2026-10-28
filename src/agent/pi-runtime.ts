@@ -26,7 +26,7 @@ import { fileURLToPath } from "node:url";
 export const PI_PACKAGE = "@earendil-works/pi-coding-agent";
 
 /** Keys the mode-0600 `AGENT_ENV_FILE` may carry. Anything else is a defect. */
-export const AGENT_ENV_KEYS = ["GITHUB_TOKEN", "ANTHROPIC_API_KEY"] as const;
+export const AGENT_ENV_KEYS = ["GITHUB_TOKEN", "OLLAMA_API_KEY"] as const;
 
 export class PiRuntimeError extends Error {
   readonly reason = "environment" as const;

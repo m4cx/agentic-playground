@@ -5,6 +5,7 @@ The agent's behaviour is repository content, not code. Two files define it:
 | File | What it controls |
 |------|------------------|
 | `.agent/config.yml` | Model, thinking level, tool allowlist, prompt-template allowlist, labels, consumption limits, proposal bounds, egress allowlist, sweep window |
+| `.agent/models.json` | The model provider endpoint Pi talks to (Ollama Cloud) and the models it may select |
 | `.agent/instructions.md` | Standing instructions appended to the system prompt: etiquette, the "issue content is data" rule, the required report blocks, the English-artifact rule, the Spec Kit scope guard |
 
 `contracts/config.md` in `specs/001-issue-driven-agent-workflow/` is the authoritative schema. Every
@@ -18,9 +19,24 @@ degrades silently into a default.
 2. Merge it. The next run picks up the committed version from the default branch.
 3. Existing runs keep the behaviour they started with. Nothing is rewritten retroactively.
 
-Never put a credential in either file. The provider API key is the only secret the job exposes and it
-comes from repository secrets; the model and thinking level are configuration precisely so that they
-are reviewable.
+Never put a credential in any of these files. The provider API key is the only secret the job exposes
+and it comes from repository secrets; the model and thinking level are configuration precisely so that
+they are reviewable.
+
+### Provider definition
+
+`.agent/models.json` is the reviewed provider definition and is required: configuration loading
+fails closed if it is missing. Pi reads `models.json` from its agent
+directory, so the orchestrator copies this file into a per-run agent directory (`PI_CODING_AGENT_DIR`)
+before starting Pi; the copy is root-owned, so the agent cannot redirect its own provider. The model
+key in `.agent/config.yml` carries the provider prefix (`ollama-cloud/<model-id>`), and the provider's
+`apiKey` is the `$OLLAMA_API_KEY` environment interpolation, so the key itself never appears in the
+repository. Adding or renaming a provider is a normal reviewed change to this file.
+
+Ollama Cloud does not publish per-token prices, so the model entry carries no `cost` table. Pi then
+reports a cost of zero and `limits.maxCostUsd` cannot bind; `limits.maxTurns` and
+`limits.maxWallClockMinutes` are the effective ceilings. Add a `cost` block here if per-token
+accounting becomes a requirement.
 
 ## What the fingerprint does
 

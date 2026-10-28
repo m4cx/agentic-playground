@@ -59,14 +59,14 @@ jobs:
       - name: Write agent secret environment
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
           AGENT_ENV_FILE: ${{ runner.temp }}/agent-env
         run: |
           set -euo pipefail
           umask 077
           : > "$AGENT_ENV_FILE"
           printf 'GITHUB_TOKEN=%s\n' "$GITHUB_TOKEN" >> "$AGENT_ENV_FILE"
-          printf 'ANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_API_KEY" >> "$AGENT_ENV_FILE"
+          printf 'OLLAMA_API_KEY=%s\n' "$OLLAMA_API_KEY" >> "$AGENT_ENV_FILE"
           {
             echo "AGENT_CACHE_OWNER_UID=$(id -u)"
             echo "AGENT_CACHE_OWNER_GID=$(id -g)"

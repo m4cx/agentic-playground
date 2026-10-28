@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -49,7 +49,7 @@ test("Pi is launched as node + the resolved entry, never as a bare `pi`", async 
     env: {
       PATH: "/usr/bin",
       GITHUB_TOKEN: "must-not-reach-pi",
-      ANTHROPIC_API_KEY: "provider-key",
+      OLLAMA_API_KEY: "provider-key",
     },
   });
 
@@ -64,10 +64,42 @@ test("Pi is launched as node + the resolved entry, never as a bare `pi`", async 
   assert.equal(call.options["detached"], true);
   const env = call.options["env"] as NodeJS.ProcessEnv;
   assert.equal(env["GITHUB_TOKEN"], undefined);
-  assert.equal(env["ANTHROPIC_API_KEY"], "provider-key");
+  assert.equal(env["OLLAMA_API_KEY"], "provider-key");
   assert.ok((env["HOME"] ?? "").startsWith(sessionDir));
   assert.ok((env["TMPDIR"] ?? "").startsWith(sessionDir));
+  assert.equal(env["PI_CODING_AGENT_DIR"], join(sessionDir, "pi-agent"));
   assert.equal(session.piVersion, "1.4.0");
+
+  await session.dispose();
+});
+
+test("the reviewed provider definitions are installed into Pi's agent directory", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "agent-launch-models-"));
+  mkdirSync(join(repoRoot, ".agent"), { recursive: true });
+  const models = JSON.stringify({ providers: { "ollama-cloud": { baseUrl: "https://ollama.com/v1" } } });
+  writeFileSync(join(repoRoot, ".agent", "models.json"), `${models}\n`);
+  const sessionDir = mkdtempSync(join(tmpdir(), "agent-launch-models-sessions-"));
+  const child = new FakeChild();
+  const calls: Array<{ options: Record<string, unknown> }> = [];
+  const spawnImpl: SpawnLike = (_command, _args, options) => {
+    calls.push({ options });
+    return child as unknown as ReturnType<SpawnLike>;
+  };
+
+  const session = new PiSession({
+    config: loadConfig(process.cwd()).config,
+    repoRoot,
+    issueNumber: 9,
+    fingerprint: "abc123",
+    sessionDir,
+    runtime: { nodePath: "/usr/bin/node", entry: "/repo/pi.js", version: "1.4.0" },
+    spawnImpl,
+    env: { PATH: "/usr/bin", OLLAMA_API_KEY: "provider-key" },
+  });
+
+  const env = calls[0]?.options["env"] as NodeJS.ProcessEnv;
+  assert.equal(env["PI_CODING_AGENT_DIR"], join(sessionDir, "pi-agent"));
+  assert.equal(readFileSync(join(sessionDir, "pi-agent", "models.json"), "utf8"), `${models}\n`);
 
   await session.dispose();
 });
@@ -91,7 +123,7 @@ test("teardown reaps the egress uid after the process group is killed", async ()
     reapProcesses: (uid) => {
       reaped.push(uid);
     },
-    env: { PATH: "/usr/bin", ANTHROPIC_API_KEY: "provider-key" },
+    env: { PATH: "/usr/bin", OLLAMA_API_KEY: "provider-key" },
   });
 
   await session.dispose();

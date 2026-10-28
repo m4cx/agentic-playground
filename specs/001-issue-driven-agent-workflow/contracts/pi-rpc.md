@@ -44,6 +44,16 @@ pinned package's CLI entry — `<repoRoot>/node_modules/@earendil-works/pi-codin
 Context files (`AGENTS.md`) stay enabled: they are project documentation the agent should respect
 (the constitution is referenced there).
 
+### Provider definition
+
+`--model` names a provider that is not built into Pi, so the provider endpoint has to come from
+documentation-shaped configuration. Pi reads `models.json` from its agent directory, therefore the
+orchestrator writes the reviewed `.agent/models.json` to `<session-dir>/pi-agent/models.json` and sets
+`PI_CODING_AGENT_DIR` to `<session-dir>/pi-agent` before spawning Pi. The copy is root-owned and the
+agent cannot write it, so the agent can neither redirect its own provider nor add one. The provider's
+`apiKey` is the `$OLLAMA_API_KEY` environment interpolation; the key itself never appears in the file
+(research D18, `contracts/config.md` §"Related file").
+
 ### Runtime preconditions
 
 Before the acknowledgement that reports the version — and therefore before the first prompt — the run
@@ -136,10 +146,11 @@ the agent. The secret file is unlinked before this probe, so Pi cannot inherit a
 
 | Variable | Present | Reason |
 |----------|---------|--------|
-| Provider key (e.g. `ANTHROPIC_API_KEY`) | yes | The only credential Pi needs; read once from the mode-`0600` `AGENT_ENV_FILE` and passed only to the Pi child |
+| Provider key (`OLLAMA_API_KEY`) | yes | The only credential Pi needs; read once from the mode-`0600` `AGENT_ENV_FILE` and passed only to the Pi child, where the provider definition references it as `$OLLAMA_API_KEY` |
 | `GITHUB_TOKEN` / `GH_TOKEN` | **no** | Hard rule: no repository authority inside the agent process (FR-029, research D10). The token is read from `AGENT_ENV_FILE` into the orchestrator and stripped from the child environment explicitly; a unit test asserts this. The file is unlinked before Pi starts |
 | `.git/config` credential helper / remote token | **no** | The checkout runs with `persist-credentials: false`; the git directory lives outside the work tree and only the orchestrator reads it. The push credential is passed per invocation and never written to its config. A unit test asserts the workspace git config contains no token before Pi starts (research D10, layer c) |
 | `HOME`, `TMPDIR`, `XDG_CACHE_HOME` | yes, under the chowned session directory | The egress user is created with `--no-create-home`; Pi must not fall back to an unwritable home |
+| `PI_CODING_AGENT_DIR` | yes, pointing at a per-run agent directory under the session directory | Pi reads `models.json` from there; the orchestrator copies the reviewed `.agent/models.json` in and keeps the copy root-owned so the agent cannot redirect its provider |
 | `AGENT_ENV_FILE` | **no** | The orchestrator reads and unlinks it before spawning Pi, and `sanitizeEnvironment` strips the name |
 | `PATH` | yes, without any Pi entry | Needed by the agent's own `bash` tool; Pi itself is launched by absolute path, so `PATH` cannot change which Pi runs |
 | `NODE_COMPILE_CACHE` | not set by the workflow | A runner-provided cache path could be unwritable for the egress uid |

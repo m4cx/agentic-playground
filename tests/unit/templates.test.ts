@@ -30,7 +30,7 @@ function repoWithTemplates(): string {
   writeFileSync(
     join(root, ".agent", "config.yml"),
     [
-      'model: "anthropic/claude-sonnet-4-5"',
+      'model: "ollama-cloud/kimi-k2.7-code"',
       "thinking: high",
       "tools:",
       "  - read",
@@ -64,11 +64,15 @@ function repoWithTemplates(): string {
       "  sessionCacheKeyPrefix: pi-session",
       "network:",
       "  allowHosts:",
-      "    - api.anthropic.com",
+      "    - ollama.com",
       "sweep:",
       "  graceMinutes: 90",
       "",
     ].join("\n"),
+  );
+  writeFileSync(
+    join(root, ".agent", "models.json"),
+    JSON.stringify({ providers: { "ollama-cloud": { baseUrl: "https://ollama.com/v1" } } }),
   );
   return root;
 }

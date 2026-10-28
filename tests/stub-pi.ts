@@ -54,7 +54,7 @@ function readOptions(): StubOptions {
     tokensPerTurn: intFromEnv("STUB_PI_TOKENS_PER_TURN", 1000),
     toolCallsPerTurn: intFromEnv("STUB_PI_TOOL_CALLS_PER_TURN", 1),
     tools: tools ? tools.split(",").map((tool) => tool.trim()) : ["read", "bash", "edit", "write", "grep", "find", "ls"],
-    modelId: process.env["STUB_PI_MODEL"] ?? "claude-sonnet-4-5",
+    modelId: process.env["STUB_PI_MODEL"] ?? "kimi-k2.7-code",
     text: process.env["STUB_PI_TEXT"] ?? DEFAULT_TEXT,
     retrySignal: retrySignal && retrySignal.length > 0 ? retrySignal : null,
     willRetry: process.env["STUB_PI_WILL_RETRY"] === "1",
@@ -105,7 +105,7 @@ class StubPeer {
         type: "stub_start",
         env: {
           hasGithubToken: Boolean(process.env["GITHUB_TOKEN"] ?? process.env["GH_TOKEN"]),
-          hasProviderKey: Boolean(process.env["ANTHROPIC_API_KEY"]),
+          hasProviderKey: Boolean(process.env["OLLAMA_API_KEY"]),
         },
       });
     }
@@ -165,7 +165,7 @@ class StubPeer {
     switch (command["type"]) {
       case "get_state":
         this.respond(command, true, {
-          model: { id: this.options.modelId, provider: "anthropic", name: "Stub Model" },
+          model: { id: this.options.modelId, provider: "ollama-cloud", name: "Stub Model" },
           thinkingLevel: "high",
           isStreaming: this.running,
           isCompacting: false,

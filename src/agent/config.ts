@@ -19,6 +19,12 @@ export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 /** Built-in tool names the orchestrator is willing to hand to the agent. */
 export const KNOWN_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"] as const;
 
+/**
+ * Reviewed provider definitions, next to `config.yml` (research D18). Pi reads
+ * `models.json` from its agent directory; the orchestrator copies this file there.
+ */
+export const MODELS_CONFIG_PATH = join(".agent", "models.json");
+
 /** A tool name matching this is refused even if someone adds it to KNOWN_TOOLS later. */
 const FORBIDDEN_TOOL_PATTERN = /(^|[_-])(git|github|gh|forge|merge|push|deploy)([_-]|$)/i;
 
@@ -599,6 +605,12 @@ export function loadConfig(
     fail(`instructions file is missing: ${instructionsPath}`, "instructionsPath");
   }
   const instructions = readFileSync(absoluteInstructions, "utf8");
+
+  // The model names a provider; the provider endpoint is a required reviewed file.
+  const modelsPath = join(repoRoot, MODELS_CONFIG_PATH);
+  if (!existsSync(modelsPath)) {
+    fail(`provider definitions are missing: ${MODELS_CONFIG_PATH}`, MODELS_CONFIG_PATH);
+  }
 
   const validated = validateConfig(raw, {
     repoRoot,

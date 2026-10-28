@@ -29,12 +29,16 @@ function fixtureRepo(mutate?: (config: string) => string, instructions = "# Rule
   const config = baseYaml();
   writeFileSync(join(root, ".agent", "config.yml"), mutate === undefined ? config : mutate(config));
   writeFileSync(join(root, ".agent", "instructions.md"), instructions);
+  writeFileSync(
+    join(root, ".agent", "models.json"),
+    JSON.stringify({ providers: { "ollama-cloud": { baseUrl: "https://ollama.com/v1" } } }),
+  );
   return root;
 }
 
 function baseYaml(): string {
   return [
-    'model: "anthropic/claude-sonnet-4-5"',
+    'model: "ollama-cloud/kimi-k2.7-code"',
     "thinking: high",
     "tools:",
     "  - read",
@@ -67,7 +71,7 @@ function baseYaml(): string {
     "  sessionCacheKeyPrefix: pi-session",
     "network:",
     "  allowHosts:",
-    "    - api.anthropic.com",
+    "    - ollama.com",
     "sweep:",
     "  graceMinutes: 90",
     "",
@@ -76,7 +80,7 @@ function baseYaml(): string {
 
 test("parses the repository's own configuration", () => {
   const loaded = loadConfig(process.cwd());
-  assert.equal(loaded.config.model, "anthropic/claude-sonnet-4-5");
+  assert.equal(loaded.config.model, "ollama-cloud/kimi-k2.7-code");
   assert.equal(loaded.config.thinking, "high");
   assert.ok(loaded.config.tools.includes("read"));
   assert.ok(loaded.config.promptTemplates.length >= 3);
@@ -153,8 +157,19 @@ test("the request label must not collide with a state label", () => {
 });
 
 test("an empty egress allowlist fails closed", () => {
-  const root = fixtureRepo((config) => config.replace("    - api.anthropic.com", "    - \u0022\u0022"));
+  const root = fixtureRepo((config) => config.replace("    - ollama.com", "    - \u0022\u0022"));
   assert.throws(() => loadConfig(root), /network\.allowHosts/);
+});
+
+test("missing provider definitions fail closed and name the file", () => {
+  const root = fixtureRepo();
+  rmSync(join(root, ".agent", "models.json"));
+  assert.throws(() => loadConfig(root), (error: unknown) => {
+    assert.ok(error instanceof ConfigError);
+    assert.equal(error.key, ".agent/models.json");
+    assert.match(error.message, /provider definitions are missing/);
+    return true;
+  });
 });
 
 test("the sweep window must exceed the run timeout", () => {
@@ -165,7 +180,7 @@ test("the sweep window must exceed the run timeout", () => {
 test("the fingerprint changes for each of its inputs", () => {
   const base = {
     instructions: "instructions",
-    model: "anthropic/claude-sonnet-4-5",
+    model: "ollama-cloud/kimi-k2.7-code",
     thinking: "high",
     tools: ["read", "bash"],
     promptTemplates: [".pi/prompts/speckit.specify.md"],

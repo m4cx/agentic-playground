@@ -544,6 +544,46 @@ runner home is not guaranteed to be world-traversable.
 
 ---
 
+## D18 — Model provider: Ollama Cloud (added 2026-10-28)
+
+**Decision**: In the first step the agent uses Ollama Cloud exclusively. `.agent/config.yml` names
+`ollama-cloud/kimi-k2.7-code`, `.agent/models.json` defines the provider
+(`baseUrl: https://ollama.com/v1`, `api: openai-completions`, `apiKey: $OLLAMA_API_KEY`), and
+`network.allowHosts` contains only `ollama.com`. The provider API key is the repository secret
+`OLLAMA_API_KEY`; no Anthropic or OpenAI credential is read, requested, or redacted as a job secret.
+The orchestrator copies `.agent/models.json` into a per-run agent directory and points
+`PI_CODING_AGENT_DIR` at it, so provider selection is reviewable content rather than a file that
+exists only on a developer's machine.
+
+**Rationale**: Ollama Cloud is not a built-in Pi 1.4.0 provider (the bundled catalogue has no
+`ollama` entry), so it must be defined through `models.json`; putting that file in the repository keeps
+the endpoint under review and out of the runner's home directory. The egress allowlist still enforces
+"model provider endpoint and nothing else" (FR-034), and because inference and authentication are
+served from the same host, one entry is sufficient. The provider prefix is part of `model`, so the
+configuration fingerprint changes when the provider changes and no session is resumed across providers
+(D5). The copy is root-owned so the agent cannot point its own provider somewhere else.
+
+**Consequence for the consumption limit**: Ollama Cloud is subscription-based and publishes no
+per-token prices, so the model entry carries no `cost` table and Pi reports a cost of zero. FR-017's
+USD cap therefore cannot bind in this configuration; `limits.maxTurns` and
+`limits.maxWallClockMinutes` are the effective ceilings, and the recorded consumption is truthfully
+zero rather than invented. If per-token accounting becomes a requirement, add a `cost` block to
+`.agent/models.json` and re-evaluate D6 — do not fabricate prices in the orchestrator.
+
+**Alternatives considered**:
+
+- *Keep Anthropic as the provider.* Rejected by the maintainer's decision for the first step; it also
+  needs a second secret and its own host in the allowlist.
+- *Hardcode the provider in `pi-session.ts`.* Removes a reviewable artifact and makes a provider switch
+  a code change instead of a configuration change.
+- *Point `PI_CODING_AGENT_DIR` at the checkout's `.agent/` directory.* The egress uid owns the work
+tree, so the agent could rewrite the provider endpoint and the key interpolation it is started with;
+  a root-owned copy under the session directory avoids that.
+- *Route through a local proxy or OpenAI-compatible gateway.* Adds a second host and a credential holder
+  with no benefit while only one provider is in use.
+
+---
+
 ## Open items carried into Phase 1 (not clarifications, resolved here)
 
 - **Acknowledgement latency (decided)**: a first job that posts the acknowledgement before the run would

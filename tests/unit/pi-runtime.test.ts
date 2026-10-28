@@ -89,10 +89,10 @@ test("dropping to the egress uid requires root", () => {
 test("the secret env file is read once, allowlisted, and unlinked", () => {
   const directory = mkdtempSync(join(tmpdir(), "agent-env-"));
   const path = join(directory, "agent.env");
-  writeFileSync(path, "GITHUB_TOKEN=ghp-secret\nANTHROPIC_API_KEY=sk-ant-secret\n", { mode: 0o600 });
+  writeFileSync(path, "GITHUB_TOKEN=ghp-secret\nOLLAMA_API_KEY=ollama-secret\n", { mode: 0o600 });
   chmodSync(path, 0o600);
   const values = readAgentEnvFile(path);
-  assert.deepEqual(values, { GITHUB_TOKEN: "ghp-secret", ANTHROPIC_API_KEY: "sk-ant-secret" });
+  assert.deepEqual(values, { GITHUB_TOKEN: "ghp-secret", OLLAMA_API_KEY: "ollama-secret" });
   assert.equal(exists(path), false);
 });
 

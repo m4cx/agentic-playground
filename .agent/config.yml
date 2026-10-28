@@ -7,8 +7,9 @@
 # Fail closed: an unknown key, a missing key, or an out-of-range value fails the run
 # before any model call.
 
-# Exact model ID accepted by the pinned Pi version.
-model: "anthropic/claude-sonnet-4-5"
+# Exact model ID accepted by the pinned Pi version. The provider prefix must match a
+# provider defined in `.agent/models.json`.
+model: "ollama-cloud/kimi-k2.7-code"
 
 # off | minimal | low | medium | high | xhigh | max
 thinking: "high"
@@ -69,10 +70,11 @@ continuity:
   sessionCacheKeyPrefix: pi-session
 
 # The only hosts the agent process may reach: the model provider, including the
-# endpoint it uses to authenticate. Nothing else.
+# endpoint it uses to authenticate. Nothing else. Ollama Cloud serves inference and
+# authentication from the same host (`https://ollama.com/v1`).
 network:
   allowHosts:
-    - api.anthropic.com
+    - ollama.com
 
 # Reconciliation window. Must be comfortably larger than limits.maxWallClockMinutes.
 sweep:

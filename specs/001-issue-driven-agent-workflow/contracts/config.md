@@ -45,7 +45,7 @@ other document without adding it here is a contract violation.
 
 | Key | Type | Required | Range / values | Used by |
 |-----|------|----------|----------------|---------|
-| `model` | string | yes | exact model ID accepted by the pinned Pi version | `--model` (research D12) |
+| `model` | string | yes | exact `provider/model-id` accepted by the pinned Pi version; the provider must be defined in `.agent/models.json` | `--model` (research D12, D18) |
 | `thinking` | enum | yes | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | `--thinking` |
 | `tools` | list of tool names | yes | subset of the built-in set; must never contain a forge or git credential-bearing tool | `--tools` (research D10) |
 | `promptTemplates` | list of repository-relative paths | yes | each path must exist on the trusted ref and end in `.md`; empty list is valid | repeated `--prompt-template` (research D13) |
@@ -68,7 +68,8 @@ other document without adding it here is a contract violation.
 
 | Value | Source | Reason |
 |-------|--------|--------|
-| Provider API key | repository secret, injected into Pi's environment only | the only credential Pi needs |
+| Provider API key | repository secret (`OLLAMA_API_KEY`), injected into Pi's environment only | the only credential Pi needs |
+| Provider endpoint and model list | `.agent/models.json`, copied into Pi's agent directory before start | reviewable provider definition, not a machine-local file (research D18) |
 | `GITHUB_TOKEN` | workflow job, orchestrator process only, never exported to Pi | FR-021, research D10 |
 | Pi executable and version | resolved from `node_modules/` using the package export map; asserted against the exact pin | Not from `PATH`, not from a global install (research D16) |
 | Orchestrator privilege | the workflow's explicit `sudo` handoff on Pi-spawning modes | Required to start Pi under the egress uid (research D17) |
@@ -78,6 +79,24 @@ There is deliberately **no** environment variable that overrides `model`, `think
 `promptTemplates`. An earlier draft passed `AGENT_MODEL` and `AGENT_THINKING` from secrets, which made
 behaviour invisible in review; that is removed. If a canary override is wanted later, it must be added
 here as a key with a stated precedence, not as an undocumented environment variable.
+
+## Related file: `.agent/models.json`
+
+`.agent/config.yml` names the model; `.agent/models.json` defines the provider that serves it. The
+provider file is **required**: a run whose configuration is loaded without it fails with
+`environment` naming `.agent/models.json`. Pi reads `models.json` from its agent directory, so the
+orchestrator copies the reviewed file into a per-run agent directory (`PI_CODING_AGENT_DIR`) before
+starting Pi. The copy is root-owned, and the provider `apiKey` is the `$OLLAMA_API_KEY` environment
+interpolation, so:
+
+- the endpoint and the model list are reviewable repository content (research D18);
+- no credential is stored in either file;
+- the agent cannot redirect its own provider because it cannot write the copied file.
+
+Switching providers is a change to both files: add or edit the provider in `models.json` and update
+the provider prefix of `model`. `network.allowHosts` must then name the new provider's hosts and
+nothing else. Because the provider prefix is part of `model`, a provider switch also changes the
+configuration fingerprint and therefore starts a fresh session.
 
 ## Validation examples (test contract)
 
