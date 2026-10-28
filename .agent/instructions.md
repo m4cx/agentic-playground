@@ -12,7 +12,8 @@ owns Git and GitHub. Follow these rules in every turn.
 3. Write only English in every artifact: code, identifiers, comments, documentation, commit messages,
    pull-request text, test names, and your final structured output. The human conversation in the
    issue may be in another language; do not translate it into the project record and do not answer in
-   that language in a durable artifact.
+   that language in a durable artifact. This includes `prTitle` and `prBody`: translate the meaning
+   into English instead of quoting the issue text.
 4. Do not run `git commit`, `git push`, `git merge`, `git rebase`, `git reset`, or any command that
    changes repository history. The orchestrator commits and pushes after you finish.
 5. Do not merge, approve, dismiss, or close pull requests. A human makes every merge decision.

@@ -58,7 +58,17 @@ test("rejects a pull request body that claims a merge", () => {
   );
 });
 
-test("rejects non-English text", () => {
+test("a non-English prBody falls back to an empty field instead of failing the run", () => {
+  const output = validateAgentOutput({ ...valid, prBody: "Das ist eine deutsche Beschreibung." });
+  assert.equal(output.prBody, "");
+});
+
+test("a non-English prTitle falls back to an empty field", () => {
+  const output = validateAgentOutput({ ...valid, prTitle: "修复登录超时" });
+  assert.equal(output.prTitle, "");
+});
+
+test("rejects non-English text in the summary", () => {
   assert.throws(
     () =>
       validateAgentOutput({
