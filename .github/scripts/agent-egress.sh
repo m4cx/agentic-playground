@@ -50,23 +50,40 @@ if ! id -u "$egress_user" >/dev/null 2>&1; then
   if [ "$(id -u)" -ne 0 ]; then
     fail "cannot create $egress_user without root"
   fi
-  useradd --system --uid "$egress_uid" --shell /usr/sbin/nologin --no-create-home "$egress_user" \
-    || fail "could not create $egress_user"
+  # Not --system: the configured uid may be above SYS_UID_MAX, which makes useradd
+  # warn (and is the reason the uid is configurable in the first place).
+  if getent group "$egress_user" >/dev/null 2>&1; then
+    useradd --uid "$egress_uid" --gid "$egress_user" --shell /usr/sbin/nologin --no-create-home "$egress_user" \
+      || fail "could not create $egress_user"
+  else
+    useradd --uid "$egress_uid" --user-group --shell /usr/sbin/nologin --no-create-home "$egress_user" \
+      || fail "could not create $egress_user"
+  fi
 fi
 resolved_uid="$(id -u "$egress_user")"
 
 # The egress uid needs execute (not list) permission on the path to the workspace.
 # The orchestrator verifies write access later; this step only guarantees the path.
+#
+# Probe as the egress user, not as root: root bypasses the permission checks, so a
+# plain `[ -x ... ]` here succeeds even when the bits are missing for everyone else.
+# The list is walked top-down because testing a deep directory already requires
+# traversal of all its ancestors.
 if [ -n "${GITHUB_WORKSPACE:-}" ]; then
+  declare -a workspace_path=()
   directory="$GITHUB_WORKSPACE"
   while [ "$directory" != "/" ]; do
-    if [ ! -x "$directory" ]; then
-      chmod o+x "$directory" || fail "cannot make $directory traversable for $egress_user"
-    fi
+    workspace_path+=("$directory")
     directory="$(dirname "$directory")"
   done
-  sudo -u "$egress_user" test -x "$GITHUB_WORKSPACE" \
-    || fail "$egress_user cannot traverse to $GITHUB_WORKSPACE"
+  for ((index = ${#workspace_path[@]} - 1; index >= 0; index--)); do
+    directory="${workspace_path[$index]}"
+    if ! sudo -u "$egress_user" test -x "$directory"; then
+      chmod o+x "$directory" || fail "cannot make $directory traversable for $egress_user"
+      sudo -u "$egress_user" test -x "$directory" \
+        || fail "$egress_user cannot traverse to $directory"
+    fi
+  done
 fi
 
 # Resolve every allowlisted host to IPv4 addresses. Any resolution failure aborts.
